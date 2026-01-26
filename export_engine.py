@@ -267,3 +267,24 @@ class ExportEngine:
         # Write settings sheet
         settings_df = pd.DataFrame(settings_data)
         settings_df.to_excel(writer, sheet_name="Settings", index=False, header=False)
+
+    def export_figure(
+        self, fig: go.Figure, filepath: str, format: str = "png", scale: int = 3
+    ) -> None:
+        """
+        Export Plotly figure to static image file.
+
+        Args:
+            fig: Plotly Figure object
+            filepath: Output file path
+            format: Image format ('png', 'svg', 'pdf')
+            scale: Scale factor for raster formats (default 3 for ~300 DPI)
+                   - scale=3 with default 700x500 = 2100x1500 pixels ≈ 300 DPI at 7x5 inches
+                   - For SVG/PDF (vector), scale doesn't matter
+
+        Example:
+            engine = ExportEngine()
+            engine.export_figure(volcano_fig, "volcano.png", format="png", scale=3)
+            engine.export_figure(heatmap_fig, "heatmap.svg", format="svg")
+        """
+        fig.write_image(filepath, format=format, scale=scale)
