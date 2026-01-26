@@ -1,0 +1,73 @@
+# Curated dermatology gene panels for RNA-seq analysis
+# Each panel contains genes relevant to specific skin biology pathways
+
+panels:
+  Anti-aging:
+    description: "Collagen synthesis, ECM remodeling, and skin aging hallmarks"
+    genes:
+      - COL1A1
+      - COL3A1
+      - ELN
+      - FBN1
+      - MMP1
+      - MMP2
+      - MMP9
+      - TIMP1
+  
+  Skin Barrier:
+    description: "Stratum corneum formation, tight junctions, and hydration"
+    genes:
+      - FLG
+      - LOR
+      - IVL
+      - CLDN1
+      - CLDN4
+      - TJP1
+      - AQP3
+      - HAS2
+      - HAS3
+  
+  Anti-inflammation:
+    description: "NF-kB pathway cytokines and inflammatory mediators"
+    genes:
+      - IL1A
+      - IL1B
+      - IL6
+      - IL8
+      - TNFA
+      - CXCL1
+      - CCL2
+      - PTGS2
+  
+  Whitening/Melanogenesis:
+    description: "Melanin synthesis pathway and pigmentation regulation"
+    genes:
+      - MITF
+      - TYR
+      - TYRP1
+      - DCT
+      - MC1R
+      - PMEL
+      - OCA2
+  
+  Sebum Regulation:
+    description: "Lipogenesis transcription factors and sebaceous gland function"
+    genes:
+      - SREBF1
+      - PPARG
+      - FASN
+      - SCD
+      - DGAT2
+      - ELOVL6
+  
+  Wound Healing:
+    description: "Growth factors, keratins, and ECM remodeling in wound repair"
+    genes:
+      - VEGFA
+      - FGF2
+      - TGFB1
+      - EGFR
+      - KRT6A
+      - KRT16
+      - KRT17
+      - MMP3
