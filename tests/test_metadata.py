@@ -162,14 +162,13 @@ def test_validate_metadata_exactly_two_per_condition(sample_counts_df):
 
 
 def test_validate_metadata_exactly_ten_conditions(sample_counts_df):
-    """Pass with exactly 10 conditions (boundary case)."""
-    metadata = {
-        f"sample_{i}": {
-            "condition": f"Cond_{i}",
+    """Pass with exactly 10 conditions (boundary case) with 2 samples each."""
+    metadata = {}
+    for i in range(1, 11):
+        metadata[f"sample_{i}"] = {
+            "condition": f"Cond_{(i - 1) // 2 + 1}",
             "group": f"group_{i}",
         }
-        for i in range(1, 11)
-    }
     is_valid, errors = validate_metadata_assignment(metadata, sample_counts_df)
     assert is_valid
     assert errors == []

@@ -494,6 +494,9 @@ class RNASeqParser:
 
     def parse(self, file_path: str, gene_column: Optional[str] = None) -> ParseResult:
         """Parse RNA-seq data file."""
+        # Convert Path to string if needed
+        file_path = str(file_path)
+
         # Detect format and parse
         if file_path.endswith(".xlsx") or file_path.endswith(".xls"):
             df = parse_excel(file_path)
@@ -554,10 +557,7 @@ class RNASeqParser:
         # Validate if RAW_COUNTS
         warnings = []
         if data_type == DataType.RAW_COUNTS:
-            try:
-                validate_for_de(expression_df)
-            except ParserValidationError as e:
-                warnings.append(e.message)
+            validate_for_de(expression_df)
 
         return ParseResult(
             expression_df=expression_df,

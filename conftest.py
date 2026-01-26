@@ -252,7 +252,7 @@ def mock_gseapy(monkeypatch):
     )
     mock_gp.prerank = MagicMock(return_value=mock_gsea_result)
 
-    monkeypatch.setattr("gseapy", mock_gp)
+    monkeypatch.setattr("pathway_enrichment.gp", mock_gp)
     return mock_gp
 
 

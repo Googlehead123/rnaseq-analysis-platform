@@ -42,7 +42,7 @@ def test_integration_raw_counts_full_workflow(test_data_dir, mock_gseapy):
     # NOTE: Both parser output AND DE engine input are samples × genes (NO TRANSPOSE)
     metadata = pd.DataFrame(
         {"condition": ["Control"] * 5 + ["Treatment"] * 5},
-        index=[f"Sample_{i}" for i in range(1, 11)],
+        index=[f"sample_{i}" for i in range(1, 11)],
     )
 
     engine = DEAnalysisEngine()
@@ -66,7 +66,7 @@ def test_integration_raw_counts_full_workflow(test_data_dir, mock_gseapy):
 
     # NOTE: Heatmap expects genes × samples, so we transpose log_normalized_counts
     sample_conditions = {
-        f"Sample_{i}": "Control" if i <= 5 else "Treatment" for i in range(1, 11)
+        f"sample_{i}": "Control" if i <= 5 else "Treatment" for i in range(1, 11)
     }
     heatmap = create_clustered_heatmap(
         de_result.log_normalized_counts.T,  # Transpose: samples × genes → genes × samples for heatmap
@@ -191,7 +191,7 @@ def test_integration_multi_comparison_storage(test_data_dir):
     # Create 3-condition metadata
     metadata = pd.DataFrame(
         {"condition": ["Control"] * 3 + ["TreatmentA"] * 3 + ["TreatmentB"] * 4},
-        index=[f"Sample_{i}" for i in range(1, 11)],
+        index=[f"sample_{i}" for i in range(1, 11)],
     )
 
     engine = DEAnalysisEngine()
