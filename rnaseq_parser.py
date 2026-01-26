@@ -42,6 +42,15 @@ KNOWN_GENE_HEADERS = [
     "gene_name",
 ]
 
+# PRE_ANALYZED column aliases
+COLUMN_ALIASES = {
+    "gene": ["gene", "Gene", "GENE", "GeneSymbol", "gene_symbol", "gene_id", "SYMBOL"],
+    "log2FoldChange": ["log2FoldChange", "log2FC", "logFC", "log2_fold_change", "lfc"],
+    "padj": ["padj", "FDR", "fdr", "adj.P.Val", "adjusted_pvalue", "q_value", "qvalue"],
+    "baseMean": ["baseMean", "AveExpr", "mean_expression", "average_expression"],
+    "pvalue": ["pvalue", "P.Value", "PValue", "raw_pvalue", "p_value"],
+}
+
 
 class DataType(Enum):
     """RNA-seq data type classification."""
@@ -414,3 +423,150 @@ def parse_csv(file_path: str) -> pd.DataFrame:
         if isinstance(e, ParserValidationError):
             raise
         raise ParserValidationError(f"Error reading file: {str(e)}")
+
+
+def parse_excel(file_path: str, sheet_name: Optional[str] = None) -> pd.DataFrame:
+    """Parse Excel file (.xlsx)."""
+    try:
+        excel_file = pd.ExcelFile(file_path)
+
+        if sheet_name:
+            if sheet_name not in excel_file.sheet_names:
+                raise ParserValidationError(
+                    f"Sheet '{sheet_name}' not found",
+                    details={"available_sheets": excel_file.sheet_names},
+                )
+            df = pd.read_excel(file_path, sheet_name=sheet_name)
+        else:
+            df = pd.read_excel(file_path, sheet_name=0)
+
+        if df.empty:
+            raise ParserValidationError("Sheet is empty")
+
+        if len(df.columns) < 2:
+            raise ParserValidationError(
+                "Sheet must have at least 2 columns",
+                details={"columns": len(df.columns)},
+            )
+
+        # Check if looks like metadata sheet
+        if len(df) <= 20:
+            non_numeric_pct = len(df.select_dtypes(exclude=[np.number]).columns) / len(
+                df.columns
+            )
+            if non_numeric_pct > 0.5:
+                raise ParserValidationError(
+                    "First sheet appears to be metadata, not count data"
+                )
+
+        return df
+
+    except FileNotFoundError:
+        raise ParserValidationError(f"File not found: {file_path}")
+    except Exception as e:
+        if isinstance(e, ParserValidationError):
+            raise
+        raise ParserValidationError(f"Error reading Excel: {str(e)}")
+
+
+def normalize_de_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename columns to canonical names for downstream compatibility."""
+    df = df.copy()
+    for canonical, aliases in COLUMN_ALIASES.items():
+        for alias in aliases:
+            if alias in df.columns and canonical not in df.columns:
+                df = df.rename(columns={alias: canonical})
+                break
+
+    required = ["gene", "log2FoldChange", "padj"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ParserValidationError(
+            "Pre-analyzed file must contain gene, log2FoldChange, and padj columns",
+            details={"missing": missing, "available": df.columns.tolist()},
+        )
+
+    return df
+
+
+class RNASeqParser:
+    """RNA-seq data parser with automatic format detection."""
+
+    def parse(self, file_path: str, gene_column: Optional[str] = None) -> ParseResult:
+        """Parse RNA-seq data file."""
+        # Detect format and parse
+        if file_path.endswith(".xlsx") or file_path.endswith(".xls"):
+            df = parse_excel(file_path)
+        else:
+            df = parse_csv(file_path)
+
+        # Detect data type
+        data_type = detect_data_type(df)
+
+        # Handle PRE_ANALYZED
+        if data_type == DataType.PRE_ANALYZED:
+            df = normalize_de_columns(df)
+            return ParseResult(
+                expression_df=None,
+                de_results_df=df,
+                data_type=DataType.PRE_ANALYZED,
+                can_run_de=False,
+                warnings=[],
+                dropped_columns=[],
+                gene_column_source="pre_analyzed",
+                needs_user_input=False,
+                gene_column_candidates=[],
+            )
+
+        # Detect gene column
+        if gene_column:
+            gene_det = GeneColumnDetectionResult(
+                gene_column=gene_column,
+                candidates=[],
+                first_col_is_sample_id=False,
+                source=f"user_specified:{gene_column}",
+            )
+        else:
+            gene_det = detect_gene_column(df)
+
+        # Check if ambiguous
+        if gene_det.candidates and not gene_column:
+            return ParseResult(
+                expression_df=None,
+                de_results_df=None,
+                data_type=data_type,
+                can_run_de=False,
+                warnings=[],
+                dropped_columns=[],
+                gene_column_source=gene_det.source,
+                needs_user_input=True,
+                gene_column_candidates=gene_det.candidates,
+            )
+
+        # Detect orientation and convert
+        orientation = detect_orientation(
+            df, gene_det.gene_column, gene_det.first_col_is_sample_id
+        )
+        expression_df = convert_to_canonical_shape(
+            df, gene_det.gene_column, orientation, gene_det.first_col_is_sample_id
+        )
+
+        # Validate if RAW_COUNTS
+        warnings = []
+        if data_type == DataType.RAW_COUNTS:
+            try:
+                validate_for_de(expression_df)
+            except ParserValidationError as e:
+                warnings.append(e.message)
+
+        return ParseResult(
+            expression_df=expression_df,
+            de_results_df=None,
+            data_type=data_type,
+            can_run_de=(data_type == DataType.RAW_COUNTS),
+            warnings=warnings,
+            dropped_columns=[],
+            gene_column_source=gene_det.source,
+            needs_user_input=False,
+            gene_column_candidates=[],
+        )
