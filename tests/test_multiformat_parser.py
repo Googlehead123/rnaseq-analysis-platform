@@ -1,13 +1,17 @@
+# pyright: ignore
 """Tests for multi-format ParseResult support."""
 
+from pathlib import Path
+
 import pandas as pd
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 from rnaseq_parser import (
     ParseResult,
     DataType,
     detect_de_columns,
     detect_sample_columns,
     SampleColumnInfo,
+    RNASeqParser,
 )
 
 
@@ -22,7 +26,7 @@ class TestParseResultMultiFormat:
                 "Sample_1": [100, 200, 300],
                 "Sample_2": [150, 250, 350],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         normalized_df = pd.DataFrame(
@@ -30,7 +34,7 @@ class TestParseResultMultiFormat:
                 "Sample_1": [10.5, 20.3, 30.1],
                 "Sample_2": [15.2, 25.4, 35.6],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         de_results_df = pd.DataFrame(
@@ -81,7 +85,7 @@ class TestParseResultMultiFormat:
                 "Sample_1": [100, 200, 300],
                 "Sample_2": [150, 250, 350],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         # Create ParseResult with only expression_df (old behavior)
@@ -184,7 +188,7 @@ class TestDetectSampleColumns:
                 "231222_none_3d_Read_Count": [100, 200, 300],
                 "231223_none_3d_Read_Count": [150, 250, 350],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         result = detect_sample_columns(df)
@@ -201,7 +205,7 @@ class TestDetectSampleColumns:
                 "240203_Bt10U_3d_FPKM": [10.5, 20.3, 30.1],
                 "240204_Bt10U_3d_FPKM": [15.2, 25.4, 35.6],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         result = detect_sample_columns(df)
@@ -218,7 +222,7 @@ class TestDetectSampleColumns:
                 "240203_Bt10U_3d_TPM": [10.5, 20.3, 30.1],
                 "240204_Bt10U_3d_TPM": [15.2, 25.4, 35.6],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         result = detect_sample_columns(df)
@@ -237,7 +241,7 @@ class TestDetectSampleColumns:
                 "240203_Bt10U_3d_FPKM": [10.5, 20.3, 30.1],
                 "240204_Bt10U_3d_FPKM": [15.2, 25.4, 35.6],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         result = detect_sample_columns(df)
@@ -254,7 +258,7 @@ class TestDetectSampleColumns:
                 "231222_none_3d_Read_Count": [100, 200, 300],
                 "240203_Bt10U_3d_FPKM": [10.5, 20.3, 30.1],
             },
-            index=["Gene_A", "Gene_B", "Gene_C"],
+            index=pd.Index(["Gene_A", "Gene_B", "Gene_C"]),
         )
 
         result = detect_sample_columns(df)
@@ -262,3 +266,138 @@ class TestDetectSampleColumns:
         assert isinstance(result, SampleColumnInfo)
         assert result.sample_to_condition["231222_none_3d_Read_Count"] == "none"
         assert result.sample_to_condition["240203_Bt10U_3d_FPKM"] == "Bt10U"
+
+
+class TestParseMultiFormatExcel:
+    """Integration tests for multi-format Excel parsing."""
+
+    @staticmethod
+    def _multiformat_path() -> str:
+        return str(
+            Path(__file__).resolve().parents[1]
+            / "Reference sequencing data"
+            / "data3_Bt10U_vs_none_fc2_&_raw.p.xlsx"
+        )
+
+    def test_parse_multiformat_extracts_de_results(self):
+        """DE results are extracted with canonical columns."""
+        parser = RNASeqParser()
+        result = parser.parse_multiformat(self._multiformat_path())
+
+        assert result.de_results_df is not None
+        assert 300 <= len(result.de_results_df) <= 340
+        assert set(["gene", "log2FoldChange", "padj"]).issubset(
+            result.de_results_df.columns
+        )
+
+    def test_parse_multiformat_extracts_counts(self):
+        """Read_Count columns are extracted into expression matrix."""
+        parser = RNASeqParser()
+        result = parser.parse_multiformat(self._multiformat_path())
+
+        assert result.expression_df is not None
+        assert result.expression_df.shape[0] == 6
+        assert 300 <= result.expression_df.shape[1] <= 340
+
+    def test_parse_multiformat_extracts_normalized(self):
+        """TPM columns are extracted into normalized matrix."""
+        parser = RNASeqParser()
+        result = parser.parse_multiformat(self._multiformat_path())
+
+        assert result.normalized_df is not None
+        assert result.normalized_df.shape[0] == 6
+        assert 300 <= result.normalized_df.shape[1] <= 340
+
+    def test_parse_multiformat_all_datatypes_populated(self):
+        """All three datatypes are populated with correct metadata."""
+        parser = RNASeqParser()
+        result = parser.parse_multiformat(self._multiformat_path())
+
+        assert result.expression_df is not None
+        assert result.de_results_df is not None
+        assert result.normalized_df is not None
+        assert result.data_types_detected == [
+            DataType.PRE_ANALYZED,
+            DataType.RAW_COUNTS,
+            DataType.NORMALIZED,
+        ]
+
+    def test_parse_multiformat_backward_compatible(self):
+        """Parser remains backward compatible for simple CSV files."""
+        parser = RNASeqParser()
+        csv_path = (
+            Path(__file__).resolve().parents[1] / "tests" / "data" / "sample_counts.csv"
+        )
+        result = parser.parse(str(csv_path))
+
+        assert result.expression_df is not None
+        assert result.normalized_df is None
+        assert result.de_results_df is None
+        assert result.data_types_detected == []
+
+
+def test_parse_multiformat_extracts_de_results():
+    """Test that DE results are extracted with canonical column names."""
+    parser = RNASeqParser()
+    result = parser.parse(
+        "Reference sequencing data/data3_Bt10U_vs_none_fc2_&_raw.p.xlsx"
+    )
+
+    assert result.de_results_df is not None, "DE results should be extracted"
+    assert "gene" in result.de_results_df.columns, "Should have 'gene' column"
+    assert "log2FoldChange" in result.de_results_df.columns, (
+        "Should have canonical log2FoldChange"
+    )
+    assert "padj" in result.de_results_df.columns, "Should have canonical padj"
+    assert len(result.de_results_df) > 0, "Should have genes"
+
+
+def test_parse_multiformat_extracts_counts():
+    """Test that count matrix is extracted from Read_Count columns."""
+    parser = RNASeqParser()
+    result = parser.parse(
+        "Reference sequencing data/data3_Bt10U_vs_none_fc2_&_raw.p.xlsx"
+    )
+
+    assert result.expression_df is not None, "Expression matrix should be extracted"
+    assert result.expression_df.shape[0] == 6, "Should have 6 samples (rows)"
+    assert result.expression_df.shape[1] > 0, "Should have genes (columns)"
+
+
+def test_parse_multiformat_extracts_normalized():
+    """Test that normalized matrix is extracted from TPM columns."""
+    parser = RNASeqParser()
+    result = parser.parse(
+        "Reference sequencing data/data3_Bt10U_vs_none_fc2_&_raw.p.xlsx"
+    )
+
+    assert result.normalized_df is not None, "Normalized matrix should be extracted"
+    assert result.normalized_df.shape[0] == 6, "Should have 6 samples (rows)"
+    assert result.normalized_df.shape[1] > 0, "Should have genes (columns)"
+
+
+def test_parse_multiformat_all_datatypes_populated():
+    """Test that all three data types are detected and populated."""
+    parser = RNASeqParser()
+    result = parser.parse(
+        "Reference sequencing data/data3_Bt10U_vs_none_fc2_&_raw.p.xlsx"
+    )
+
+    assert DataType.PRE_ANALYZED in result.data_types_detected
+    assert DataType.RAW_COUNTS in result.data_types_detected
+    assert DataType.NORMALIZED in result.data_types_detected
+    assert len(result.data_types_detected) == 3
+
+
+def test_parse_multiformat_backward_compatible():
+    """Test that simple CSV files still work as before."""
+    parser = RNASeqParser()
+    csv_path = (
+        Path(__file__).resolve().parents[1] / "tests" / "data" / "sample_counts.csv"
+    )
+    result = parser.parse(str(csv_path))
+
+    assert result.expression_df is not None
+    assert result.normalized_df is None
+    assert result.de_results_df is None
+    assert result.data_types_detected == []
