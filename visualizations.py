@@ -54,6 +54,14 @@ def create_volcano_plot(
 
     # Add -log10(padj) column
     df = results_df.copy()
+
+    if df["padj"].isna().any():
+        n_nan = df["padj"].isna().sum()
+        raise ValueError(
+            f"Cannot create volcano plot: {n_nan} NaN values in padj column. "
+            f"Ensure differential expression analysis completed successfully."
+        )
+
     df["-log10_padj"] = -np.log10(df["padj"].clip(lower=1e-300))  # Clip to avoid inf
 
     # Classify significance

@@ -126,7 +126,13 @@ class GenePanelAnalyzer:
 
         # Step 2: Z-score per gene (across all samples)
         panel_data = expression_df[available_genes]
-        z_scores = (panel_data - panel_data.mean()) / panel_data.std()
+        std_vals = panel_data.std()
+        if (std_vals == 0).any():
+            raise ValueError(
+                f"Cannot compute z-scores: some genes have zero variance (constant expression). "
+                f"Genes with zero variance: {panel_data.columns[(std_vals == 0)].tolist()}"
+            )
+        z_scores = (panel_data - panel_data.mean()) / std_vals
 
         # Step 3: Mean z-score per sample (across genes)
         sample_scores = z_scores.mean(axis=1)  # Series: sample → score
