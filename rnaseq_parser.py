@@ -116,6 +116,9 @@ class ParseResult:
     expression_df: Optional[
         pd.DataFrame
     ]  # samples × genes matrix (RAW_COUNTS/NORMALIZED only)
+    normalized_df: Optional[
+        pd.DataFrame
+    ]  # samples × genes with TPM/FPKM (NORMALIZED or multi-format)
     de_results_df: Optional[pd.DataFrame]  # DE results table (PRE_ANALYZED only)
 
     # Metadata
@@ -126,6 +129,9 @@ class ParseResult:
     gene_column_source: str  # How gene column was identified
     needs_user_input: bool  # True if parser couldn't auto-determine gene column
     gene_column_candidates: List[str]  # Candidate columns when needs_user_input=True
+    data_types_detected: List[
+        DataType
+    ]  # All data types found in file (empty for single-type)
 
 
 def looks_like_sample_names(values: List[str]) -> bool:
@@ -511,6 +517,7 @@ class RNASeqParser:
             df = normalize_de_columns(df)
             return ParseResult(
                 expression_df=None,
+                normalized_df=None,
                 de_results_df=df,
                 data_type=DataType.PRE_ANALYZED,
                 can_run_de=False,
@@ -519,6 +526,7 @@ class RNASeqParser:
                 gene_column_source="pre_analyzed",
                 needs_user_input=False,
                 gene_column_candidates=[],
+                data_types_detected=[],
             )
 
         # Detect gene column
@@ -536,6 +544,7 @@ class RNASeqParser:
         if gene_det.candidates and not gene_column:
             return ParseResult(
                 expression_df=None,
+                normalized_df=None,
                 de_results_df=None,
                 data_type=data_type,
                 can_run_de=False,
@@ -544,6 +553,7 @@ class RNASeqParser:
                 gene_column_source=gene_det.source,
                 needs_user_input=True,
                 gene_column_candidates=gene_det.candidates,
+                data_types_detected=[],
             )
 
         # Detect orientation and convert
@@ -561,6 +571,7 @@ class RNASeqParser:
 
         return ParseResult(
             expression_df=expression_df,
+            normalized_df=None,
             de_results_df=None,
             data_type=data_type,
             can_run_de=(data_type == DataType.RAW_COUNTS),
@@ -569,4 +580,5 @@ class RNASeqParser:
             gene_column_source=gene_det.source,
             needs_user_input=False,
             gene_column_candidates=[],
+            data_types_detected=[],
         )
