@@ -2,7 +2,13 @@
 
 import pandas as pd
 import pytest
-from rnaseq_parser import ParseResult, DataType
+from rnaseq_parser import (
+    ParseResult,
+    DataType,
+    detect_de_columns,
+    detect_sample_columns,
+    SampleColumnInfo,
+)
 
 
 class TestParseResultMultiFormat:
@@ -101,3 +107,158 @@ class TestParseResultMultiFormat:
         assert result.data_types_detected == []
         assert result.data_type == DataType.RAW_COUNTS
         assert result.can_run_de is True
+
+
+class TestDetectDEColumns:
+    """Test pattern-based DE column detection."""
+
+    def test_detect_de_columns_pattern_fc(self):
+        """Test detection of fold change column with pattern matching."""
+        df = pd.DataFrame(
+            {
+                "gene": ["Gene_A", "Gene_B", "Gene_C"],
+                "Bt10U/none.fc": [2.5, -1.3, 0.8],
+                "Bt10U/none.bh.pval": [0.001, 0.05, 0.1],
+            }
+        )
+
+        column_mapping, comparison_name = detect_de_columns(df)
+
+        assert "log2FoldChange" in column_mapping
+        assert column_mapping["log2FoldChange"] == "Bt10U/none.fc"
+        assert comparison_name == "Bt10U/none"
+
+    def test_detect_de_columns_pattern_pval(self):
+        """Test detection of adjusted p-value column with pattern matching."""
+        df = pd.DataFrame(
+            {
+                "gene": ["Gene_A", "Gene_B", "Gene_C"],
+                "Bt10U/none.fc": [2.5, -1.3, 0.8],
+                "Bt10U/none.bh.pval": [0.001, 0.05, 0.1],
+            }
+        )
+
+        column_mapping, comparison_name = detect_de_columns(df)
+
+        assert "padj" in column_mapping
+        assert column_mapping["padj"] == "Bt10U/none.bh.pval"
+
+    def test_detect_de_columns_extracts_comparison_name(self):
+        """Test extraction of comparison name from pattern."""
+        df = pd.DataFrame(
+            {
+                "gene": ["Gene_A", "Gene_B", "Gene_C"],
+                "Bt10U/none.fc": [2.5, -1.3, 0.8],
+                "Bt10U/none.raw.pval": [0.001, 0.05, 0.1],
+            }
+        )
+
+        column_mapping, comparison_name = detect_de_columns(df)
+
+        assert comparison_name == "Bt10U/none"
+
+    def test_detect_de_columns_fallback_to_standard(self):
+        """Test fallback to standard column names when patterns don't match."""
+        df = pd.DataFrame(
+            {
+                "gene": ["Gene_A", "Gene_B", "Gene_C"],
+                "log2FoldChange": [2.5, -1.3, 0.8],
+                "padj": [0.001, 0.05, 0.1],
+            }
+        )
+
+        column_mapping, comparison_name = detect_de_columns(df)
+
+        assert column_mapping["log2FoldChange"] == "log2FoldChange"
+        assert column_mapping["padj"] == "padj"
+        assert comparison_name is None
+
+
+class TestDetectSampleColumns:
+    """Test sample/condition auto-detection from column names."""
+
+    def test_detect_sample_columns_read_count(self):
+        """Test detection of Read_Count columns."""
+        df = pd.DataFrame(
+            {
+                "231222_none_3d_Read_Count": [100, 200, 300],
+                "231223_none_3d_Read_Count": [150, 250, 350],
+            },
+            index=["Gene_A", "Gene_B", "Gene_C"],
+        )
+
+        result = detect_sample_columns(df)
+
+        assert isinstance(result, SampleColumnInfo)
+        assert len(result.count_columns) == 2
+        assert "231222_none_3d_Read_Count" in result.count_columns
+        assert "231223_none_3d_Read_Count" in result.count_columns
+
+    def test_detect_sample_columns_fpkm(self):
+        """Test detection of FPKM columns."""
+        df = pd.DataFrame(
+            {
+                "240203_Bt10U_3d_FPKM": [10.5, 20.3, 30.1],
+                "240204_Bt10U_3d_FPKM": [15.2, 25.4, 35.6],
+            },
+            index=["Gene_A", "Gene_B", "Gene_C"],
+        )
+
+        result = detect_sample_columns(df)
+
+        assert isinstance(result, SampleColumnInfo)
+        assert len(result.fpkm_columns) == 2
+        assert "240203_Bt10U_3d_FPKM" in result.fpkm_columns
+        assert "240204_Bt10U_3d_FPKM" in result.fpkm_columns
+
+    def test_detect_sample_columns_tpm(self):
+        """Test detection of TPM columns."""
+        df = pd.DataFrame(
+            {
+                "240203_Bt10U_3d_TPM": [10.5, 20.3, 30.1],
+                "240204_Bt10U_3d_TPM": [15.2, 25.4, 35.6],
+            },
+            index=["Gene_A", "Gene_B", "Gene_C"],
+        )
+
+        result = detect_sample_columns(df)
+
+        assert isinstance(result, SampleColumnInfo)
+        assert len(result.tpm_columns) == 2
+        assert "240203_Bt10U_3d_TPM" in result.tpm_columns
+        assert "240204_Bt10U_3d_TPM" in result.tpm_columns
+
+    def test_detect_conditions_from_columns(self):
+        """Test extraction of unique conditions from sample columns."""
+        df = pd.DataFrame(
+            {
+                "231222_none_3d_Read_Count": [100, 200, 300],
+                "231223_none_3d_Read_Count": [150, 250, 350],
+                "240203_Bt10U_3d_FPKM": [10.5, 20.3, 30.1],
+                "240204_Bt10U_3d_FPKM": [15.2, 25.4, 35.6],
+            },
+            index=["Gene_A", "Gene_B", "Gene_C"],
+        )
+
+        result = detect_sample_columns(df)
+
+        assert isinstance(result, SampleColumnInfo)
+        assert "none" in result.conditions_detected
+        assert "Bt10U" in result.conditions_detected
+        assert len(result.conditions_detected) == 2
+
+    def test_sample_to_condition_mapping(self):
+        """Test mapping of sample columns to conditions."""
+        df = pd.DataFrame(
+            {
+                "231222_none_3d_Read_Count": [100, 200, 300],
+                "240203_Bt10U_3d_FPKM": [10.5, 20.3, 30.1],
+            },
+            index=["Gene_A", "Gene_B", "Gene_C"],
+        )
+
+        result = detect_sample_columns(df)
+
+        assert isinstance(result, SampleColumnInfo)
+        assert result.sample_to_condition["231222_none_3d_Read_Count"] == "none"
+        assert result.sample_to_condition["240203_Bt10U_3d_FPKM"] == "Bt10U"

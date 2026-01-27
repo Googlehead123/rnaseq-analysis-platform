@@ -11,7 +11,7 @@ Canonical output: samples × genes DataFrame (sample names as index, gene symbol
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict
 import pandas as pd
 import numpy as np
 import re
@@ -51,6 +51,19 @@ COLUMN_ALIASES = {
     "pvalue": ["pvalue", "P.Value", "PValue", "raw_pvalue", "p_value"],
 }
 
+# Pattern-based DE column detection for non-standard formats
+DE_COLUMN_PATTERNS = {
+    "log2FoldChange": [r"^.+\.fc$", r"^.+\.logFC$", r"^.+\.log2FC$"],
+    "padj": [r"^.+\.bh\.pval$", r"^.+\.adj\.pval$", r"^.+\.FDR$", r"^.+\.qvalue$"],
+    "pvalue": [r"^.+\.raw\.pval$", r"^.+\.pval$", r"^.+\.PValue$"],
+    "baseMean": [r"^.+\.baseMean$", r"^.+\.AveExpr$"],
+}
+
+# Sample column detection patterns
+COUNT_COLUMN_PATTERN = r"^(.+)_(.+)_(.+)_Read_Count$"
+FPKM_COLUMN_PATTERN = r"^(.+)_(.+)_(.+)_FPKM$"
+TPM_COLUMN_PATTERN = r"^(.+)_(.+)_(.+)_TPM$"
+
 
 class DataType(Enum):
     """RNA-seq data type classification."""
@@ -79,6 +92,17 @@ class GeneColumnDetectionResult:
     source: str  # How detection was made
     # source values: "known_gene_header:{col}", "heuristic_gene_col:{col}",
     #                "sample_id_detected", "ambiguous", "no_candidates"
+
+
+@dataclass
+class SampleColumnInfo:
+    """Result from detect_sample_columns with sample/condition information."""
+
+    count_columns: List[str]
+    fpkm_columns: List[str]
+    tpm_columns: List[str]
+    conditions_detected: set
+    sample_to_condition: Dict[str, str]
 
 
 @dataclass
@@ -297,6 +321,114 @@ def detect_data_type(df: pd.DataFrame) -> DataType:
 
     # Otherwise assume NORMALIZED (floats, TPM/FPKM/CPM)
     return DataType.NORMALIZED
+
+
+def detect_de_columns(df: pd.DataFrame) -> Tuple[Dict[str, str], Optional[str]]:
+    """
+    Detect DE result columns using pattern matching or standard aliases.
+
+    Tries pattern matching first (for non-standard formats like Bt10U/none.fc),
+    then falls back to COLUMN_ALIASES for standard column names.
+
+    Returns:
+        Tuple of (column_mapping, comparison_name) where:
+        - column_mapping: Dict mapping canonical names to actual column names
+          e.g., {"log2FoldChange": "Bt10U/none.fc", "padj": "Bt10U/none.bh.pval"}
+        - comparison_name: Extracted comparison name (e.g., "Bt10U/none") or None
+    """
+    column_mapping = {}
+    comparison_name = None
+
+    for canonical_name, patterns in DE_COLUMN_PATTERNS.items():
+        for col in df.columns:
+            for pattern in patterns:
+                if re.match(pattern, col, re.IGNORECASE):
+                    column_mapping[canonical_name] = col
+
+                    if comparison_name is None:
+                        if canonical_name == "log2FoldChange":
+                            comparison_name = re.sub(
+                                r"\.fc$|\.logFC$|\.log2FC$",
+                                "",
+                                col,
+                                flags=re.IGNORECASE,
+                            )
+                        elif canonical_name == "padj":
+                            comparison_name = re.sub(
+                                r"\.bh\.pval$|\.adj\.pval$|\.FDR$|\.qvalue$",
+                                "",
+                                col,
+                                flags=re.IGNORECASE,
+                            )
+                        elif canonical_name == "pvalue":
+                            comparison_name = re.sub(
+                                r"\.raw\.pval$|\.pval$|\.PValue$",
+                                "",
+                                col,
+                                flags=re.IGNORECASE,
+                            )
+                    break
+
+    if column_mapping:
+        return column_mapping, comparison_name
+
+    for canonical_name, aliases in COLUMN_ALIASES.items():
+        for col in df.columns:
+            if col in aliases:
+                column_mapping[canonical_name] = col
+
+    return column_mapping, None
+
+
+def detect_sample_columns(df: pd.DataFrame) -> SampleColumnInfo:
+    """
+    Detect sample columns and extract conditions from column names.
+
+    Matches columns against patterns: {date}_{condition}_{timepoint}_{metric}
+    - Read_Count: raw count data
+    - FPKM: normalized expression
+    - TPM: normalized expression
+
+    Returns:
+        SampleColumnInfo with detected columns, conditions, and mappings
+    """
+    count_columns = []
+    fpkm_columns = []
+    tpm_columns = []
+    conditions_detected = set()
+    sample_to_condition = {}
+
+    for col in df.columns:
+        match = re.match(COUNT_COLUMN_PATTERN, col)
+        if match:
+            count_columns.append(col)
+            condition = match.group(2)
+            conditions_detected.add(condition)
+            sample_to_condition[col] = condition
+            continue
+
+        match = re.match(FPKM_COLUMN_PATTERN, col)
+        if match:
+            fpkm_columns.append(col)
+            condition = match.group(2)
+            conditions_detected.add(condition)
+            sample_to_condition[col] = condition
+            continue
+
+        match = re.match(TPM_COLUMN_PATTERN, col)
+        if match:
+            tpm_columns.append(col)
+            condition = match.group(2)
+            conditions_detected.add(condition)
+            sample_to_condition[col] = condition
+
+    return SampleColumnInfo(
+        count_columns=count_columns,
+        fpkm_columns=fpkm_columns,
+        tpm_columns=tpm_columns,
+        conditions_detected=conditions_detected,
+        sample_to_condition=sample_to_condition,
+    )
 
 
 def convert_to_canonical_shape(
