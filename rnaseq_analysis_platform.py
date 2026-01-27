@@ -309,8 +309,8 @@ with st.sidebar:
                     f"Found {len(sample_names)} samples across {len(detected_conditions)} conditions"
                 )
 
-        # Metadata Assignment (Only for RAW_COUNTS)
-        if result.data_type == DataType.RAW_COUNTS:
+        # Metadata Assignment (Only for files that can run DE)
+        if result.can_run_de:
             st.header("2. Metadata")
 
             # Condition management
@@ -427,8 +427,7 @@ with st.sidebar:
         # Initialize is_valid to False by default
         is_valid = False
 
-        if result.data_type == DataType.RAW_COUNTS:
-            # Re-validate to ensure is_valid is set correctly in this scope
+        if result.can_run_de:
             is_valid, _ = validate_metadata_assignment(
                 st.session_state["sample_metadata"], result.expression_df
             )
@@ -449,8 +448,7 @@ with st.sidebar:
 
                 de_engine = DEAnalysisEngine()
 
-                if result.data_type == DataType.RAW_COUNTS:
-                    # Convert metadata to DataFrame
+                if result.can_run_de:
                     meta_df = pd.DataFrame.from_dict(
                         st.session_state["sample_metadata"], orient="index"
                     )
@@ -556,10 +554,7 @@ with st.sidebar:
                 # For RAW_COUNTS, get from first DE result (all share same normalized counts)
                 # For NORMALIZED, use expression_df directly
                 norm_counts = None
-                if (
-                    result.data_type == DataType.RAW_COUNTS
-                    and st.session_state["de_results"]
-                ):
+                if result.can_run_de and st.session_state["de_results"]:
                     first_res = next(iter(st.session_state["de_results"].values()))
                     norm_counts = first_res.log_normalized_counts
                 elif (
@@ -583,8 +578,7 @@ with st.sidebar:
                         )
 
                 if norm_counts is not None:
-                    # Prepare sample conditions map
-                    if result.data_type == DataType.RAW_COUNTS:
+                    if result.can_run_de and st.session_state["sample_metadata"]:
                         sample_conds = {
                             s: m["condition"]
                             for s, m in st.session_state["sample_metadata"].items()

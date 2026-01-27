@@ -388,3 +388,119 @@ def test_all_reference_files_visualize_successfully():
     assert hasattr(pca, "to_html"), "PCA plot is not a Plotly Figure"
 
     print(f"✓ All visualizations created successfully for {file}")
+
+
+def test_multiformat_can_run_de():
+    """
+    Test that multi-format files (RAW_COUNTS + PRE_ANALYZED) have can_run_de=True.
+
+    This test verifies the fix for the UI flow bug where multi-format files
+    couldn't run DE analysis because the UI checked data_type == RAW_COUNTS
+    instead of can_run_de flag.
+
+    Scenario:
+    - File contains both RAW_COUNTS (expression matrix) and PRE_ANALYZED (DE results)
+    - Parser should set can_run_de=True (because RAW_COUNTS is present)
+    - UI should respect can_run_de flag to enable metadata assignment and DE analysis
+    """
+    from rnaseq_parser import RNASeqParser, DataType
+    from de_analysis import DEAnalysisEngine
+    import pandas as pd
+
+    parser = RNASeqParser()
+
+    file_path = Path("Reference sequencing data/data3_Bt10U_vs_none_fc2_&_raw.p.xlsx")
+    assert file_path.exists(), f"Reference file not found: {file_path}"
+
+    result = parser.parse(str(file_path))
+
+    assert hasattr(result, "data_types_detected"), (
+        "ParseResult missing data_types_detected"
+    )
+    assert len(result.data_types_detected) > 1, (
+        f"Expected multi-format file, got {len(result.data_types_detected)} data type(s)"
+    )
+    assert DataType.RAW_COUNTS in result.data_types_detected, (
+        "Multi-format file should contain RAW_COUNTS"
+    )
+    assert DataType.PRE_ANALYZED in result.data_types_detected, (
+        "Multi-format file should contain PRE_ANALYZED"
+    )
+
+    assert result.can_run_de == True, (
+        "Multi-format file with RAW_COUNTS should have can_run_de=True"
+    )
+
+    assert result.expression_df is not None, (
+        "Multi-format file should have expression_df (RAW_COUNTS)"
+    )
+    assert result.de_results_df is not None, (
+        "Multi-format file should have de_results_df (PRE_ANALYZED)"
+    )
+
+    sample_count = min(6, len(result.expression_df))
+    metadata = pd.DataFrame(
+        {
+            "condition": ["Control"] * (sample_count // 2)
+            + ["Treatment"] * (sample_count - sample_count // 2)
+        },
+        index=result.expression_df.index[:sample_count],
+    )
+
+    engine = DEAnalysisEngine()
+    de_results = engine.run_all_comparisons(
+        result.expression_df.iloc[:sample_count],
+        metadata,
+        comparisons=[("Treatment", "Control")],
+        design_factor="condition",
+    )
+
+    assert ("Treatment", "Control") in de_results, (
+        "DE analysis should complete successfully with extracted counts"
+    )
+    de_result = de_results[("Treatment", "Control")]
+    assert not de_result.results_df.empty, "DE results should not be empty"
+
+    print(f"✓ Multi-format file correctly has can_run_de=True and supports DE analysis")
+    assert DataType.RAW_COUNTS in result.data_types_detected, (
+        "Multi-format file should contain RAW_COUNTS"
+    )
+    assert DataType.PRE_ANALYZED in result.data_types_detected, (
+        "Multi-format file should contain PRE_ANALYZED"
+    )
+
+    # CRITICAL: can_run_de should be True because RAW_COUNTS is present
+    assert result.can_run_de == True, (
+        "Multi-format file with RAW_COUNTS should have can_run_de=True"
+    )
+
+    # Verify both data types are extracted
+    assert result.expression_df is not None, (
+        "Multi-format file should have expression_df (RAW_COUNTS)"
+    )
+    assert result.de_results_df is not None, (
+        "Multi-format file should have de_results_df (PRE_ANALYZED)"
+    )
+
+    # Verify we can run DE analysis with extracted counts
+    # This simulates what the UI would do after metadata assignment
+    metadata = pd.DataFrame(
+        {"condition": ["Control"] * 3 + ["Treatment"] * 3},
+        index=result.expression_df.index[:6],
+    )
+
+    engine = DEAnalysisEngine()
+    de_results = engine.run_all_comparisons(
+        result.expression_df.iloc[:6],  # Use first 6 samples
+        metadata,
+        comparisons=[("Treatment", "Control")],
+        design_factor="condition",
+    )
+
+    assert ("Treatment", "Control") in de_results, (
+        "DE analysis should complete successfully with extracted counts"
+    )
+    de_result = de_results[("Treatment", "Control")]
+    assert not de_result.results_df.empty, "DE results should not be empty"
+
+    print(f"✓ Multi-format file correctly has can_run_de=True and supports DE analysis")
