@@ -162,7 +162,7 @@ def test_integration_normalized_mode_disables_de(test_data_dir):
 
     # Verify viz still works
     conditions = {
-        f"Sample_{i}": "Control" if i <= 5 else "Treatment" for i in range(1, 11)
+        f"sample_{i}": "Control" if i <= 5 else "Treatment" for i in range(1, 11)
     }
     log_expr = np.log2(result.expression_df + 1)  # samples × genes
 

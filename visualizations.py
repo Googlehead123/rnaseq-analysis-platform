@@ -28,6 +28,15 @@ def create_volcano_plot(
     Returns:
         Plotly Figure object
     """
+    # Validate input
+    if results_df is None or results_df.empty:
+        raise ValueError("results_df cannot be None or empty")
+
+    required_cols = ["gene", "log2FoldChange", "padj"]
+    missing = [col for col in required_cols if col not in results_df.columns]
+    if missing:
+        raise ValueError(f"results_df missing required columns: {missing}")
+
     # Add -log10(padj) column
     df = results_df.copy()
     df["-log10_padj"] = -np.log10(df["padj"].clip(lower=1e-300))  # Clip to avoid inf
@@ -100,6 +109,19 @@ def create_clustered_heatmap(
     Note: We only cluster ROWS (genes), not columns (samples).
     Samples are grouped by condition for clearer visualization.
     """
+    # Validate input
+    if expression_df is None or expression_df.empty:
+        raise ValueError("expression_df cannot be None or empty")
+
+    if not sample_conditions:
+        raise ValueError("sample_conditions cannot be empty")
+
+    missing_samples = [s for s in expression_df.columns if s not in sample_conditions]
+    if missing_samples:
+        raise ValueError(
+            f"Samples missing from sample_conditions: {missing_samples[:5]}"
+        )
+
     # Gene selection: prioritize DE genes, fallback to variance
     if gene_selection == "de" and de_results_df is not None:
         # Top N genes by significance (lowest padj)
@@ -173,6 +195,16 @@ def create_pca_plot(
     Returns:
         Plotly Figure object
     """
+    # Validate input
+    if expression_df is None or expression_df.empty:
+        raise ValueError("expression_df cannot be None or empty")
+
+    if expression_df.shape[1] < 2:
+        raise ValueError(f"PCA requires ≥2 samples, got {expression_df.shape[1]}")
+
+    if not sample_conditions:
+        raise ValueError("sample_conditions cannot be empty")
+
     # Run PCA (samples × genes → PC space)
     pca = PCA(n_components=min(3, expression_df.shape[0]))
     pca_result = pca.fit_transform(expression_df.values)
