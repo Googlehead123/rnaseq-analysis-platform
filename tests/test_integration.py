@@ -250,3 +250,141 @@ def test_integration_invalid_input_raises_error():
 
     # Cleanup
     Path(temp_path).unlink()
+
+
+# =============================================================================
+# TEST 6: All Reference Files Parse Successfully
+# =============================================================================
+def test_all_reference_files_parse_successfully():
+    """
+    Test that all 4 reference files parse without error.
+
+    Verifies:
+    - Multi-format detection (PRE_ANALYZED + RAW_COUNTS + NORMALIZED)
+    - All data extracted correctly
+    - Expected shapes (6 samples × genes)
+    """
+    from rnaseq_parser import RNASeqParser, DataType
+
+    parser = RNASeqParser()
+
+    files = [
+        "Reference sequencing data/data3_Bt10U_vs_none_fc2_&_raw.p.xlsx",
+        "Reference sequencing data/data3_Bu10_vs_none_fc2_&_raw.p.xlsx",
+        "Reference sequencing data/data3_SwX15_vs_none_fc2_&_raw.p.xlsx",
+        "Reference sequencing data/data3_my45_vs_none_fc2_&_raw.p.xlsx",
+    ]
+
+    expected_gene_counts = {
+        "data3_Bt10U_vs_none_fc2_&_raw.p.xlsx": 320,
+        "data3_Bu10_vs_none_fc2_&_raw.p.xlsx": 194,
+        "data3_SwX15_vs_none_fc2_&_raw.p.xlsx": 170,
+        "data3_my45_vs_none_fc2_&_raw.p.xlsx": 510,
+    }
+
+    for file in files:
+        # Verify file exists
+        file_path = Path(file)
+        assert file_path.exists(), f"Reference file not found: {file}"
+
+        # Parse file
+        result = parser.parse(file)
+
+        # Verify multi-format detection
+        assert len(result.data_types_detected) == 3, (
+            f"{file}: Expected 3 data types, got {len(result.data_types_detected)}"
+        )
+        assert DataType.PRE_ANALYZED in result.data_types_detected, (
+            f"{file}: PRE_ANALYZED not detected"
+        )
+        assert DataType.RAW_COUNTS in result.data_types_detected, (
+            f"{file}: RAW_COUNTS not detected"
+        )
+        assert DataType.NORMALIZED in result.data_types_detected, (
+            f"{file}: NORMALIZED not detected"
+        )
+
+        # Verify all data extracted
+        assert result.de_results_df is not None, f"{file}: de_results_df is None"
+        assert result.expression_df is not None, f"{file}: expression_df is None"
+        assert result.normalized_df is not None, f"{file}: normalized_df is None"
+
+        # Verify shapes (6 samples × genes)
+        assert result.expression_df.shape[0] == 6, (
+            f"{file}: Expected 6 samples, got {result.expression_df.shape[0]}"
+        )
+        assert result.normalized_df.shape[0] == 6, (
+            f"{file}: Normalized data expected 6 samples, got {result.normalized_df.shape[0]}"
+        )
+
+        # Verify gene counts match expected
+        file_key = file.split("/")[-1]
+        expected_genes = expected_gene_counts.get(file_key)
+        if expected_genes:
+            actual_genes = len(result.de_results_df)
+            assert actual_genes == expected_genes, (
+                f"{file}: Expected {expected_genes} genes, got {actual_genes}"
+            )
+
+        print(
+            f"✓ {file}: {len(result.de_results_df)} genes, "
+            f"{result.expression_df.shape[0]} samples"
+        )
+
+
+def test_all_reference_files_visualize_successfully():
+    """
+    Test that visualizations can be created for all reference files.
+
+    Verifies:
+    - Volcano plot generation
+    - Clustered heatmap generation
+    - PCA plot generation
+    """
+    from rnaseq_parser import RNASeqParser
+    from visualizations import (
+        create_volcano_plot,
+        create_clustered_heatmap,
+        create_pca_plot,
+    )
+
+    parser = RNASeqParser()
+
+    file = "Reference sequencing data/data3_Bt10U_vs_none_fc2_&_raw.p.xlsx"
+
+    file_path = Path(file)
+    assert file_path.exists(), f"Reference file not found: {file}"
+
+    result = parser.parse(file)
+
+    assert result.de_results_df is not None
+    assert result.normalized_df is not None
+
+    volcano = create_volcano_plot(result.de_results_df)
+    assert volcano is not None, "Volcano plot is None"
+    assert hasattr(volcano, "to_html"), "Volcano plot is not a Plotly Figure"
+
+    sample_names = list(result.normalized_df.index)
+    conditions = {
+        sample: "none"
+        if "none" in str(result.de_results_df.iloc[0]).lower()
+        else "treated"
+        for sample in sample_names
+    }
+
+    heatmap = create_clustered_heatmap(
+        result.normalized_df.T,
+        conditions,
+        de_results_df=result.de_results_df,
+    )
+    assert heatmap is not None, "Heatmap is None"
+    assert hasattr(heatmap, "to_html"), "Heatmap is not a Plotly Figure"
+
+    pca = create_pca_plot(
+        result.normalized_df,
+        conditions,
+    )
+    assert pca is not None, "PCA plot is None"
+    assert hasattr(pca, "to_html"), "PCA plot is not a Plotly Figure"
+
+    print(f"✓ All visualizations created successfully for {file}")
