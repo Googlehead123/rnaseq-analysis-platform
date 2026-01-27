@@ -68,9 +68,9 @@ DE_COLUMN_PATTERNS = {
 }
 
 # Sample column detection patterns
-COUNT_COLUMN_PATTERN = r"^(.+)_(.+)_(.+)_Read_Count$"
-FPKM_COLUMN_PATTERN = r"^(.+)_(.+)_(.+)_FPKM$"
-TPM_COLUMN_PATTERN = r"^(.+)_(.+)_(.+)_TPM$"
+COUNT_COLUMN_PATTERN = r"^([^_]+)_([^_]+)_([^_]+)_Read_Count$"
+FPKM_COLUMN_PATTERN = r"^([^_]+)_([^_]+)_([^_]+)_FPKM$"
+TPM_COLUMN_PATTERN = r"^([^_]+)_([^_]+)_([^_]+)_TPM$"
 
 
 class DataType(Enum):
@@ -493,7 +493,7 @@ def convert_to_canonical_shape(
     gene_column: Optional[str],
     orientation: str,
     first_col_is_sample_id: bool,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, list[str]]:
     """
     Convert input DataFrame to canonical shape: samples × genes.
 
@@ -508,8 +508,10 @@ def convert_to_canonical_shape(
         first_col_is_sample_id: True if first column is sample ID (from detect_gene_column)
 
     Returns:
-        DataFrame in samples × genes format
+        Tuple of (DataFrame in samples × genes format, list of warning messages)
     """
+    warnings = []
+
     if orientation == "samples_as_rows":
         # Data is ALREADY samples × genes (most common modern format)
         result = df.copy()
@@ -524,7 +526,7 @@ def convert_to_canonical_shape(
         dropped = [c for c in result.columns if c not in numeric_cols]
         result = result.loc[:, numeric_cols]
 
-        return result
+        return result, warnings
 
     elif orientation == "genes_as_rows":
         # genes × samples format → needs transpose
@@ -542,16 +544,24 @@ def convert_to_canonical_shape(
         # Step 3: Handle duplicate gene symbols (sum counts)
         if result.index.duplicated().any():
             n_dups = result.index.duplicated().sum()
+            dup_genes = (
+                result.index[result.index.duplicated(keep=False)].unique().tolist()
+            )
             result = result.groupby(level=0).sum()
-            # Warning added to ParseResult.warnings
+            # Add warning about duplicate genes
+            warnings.append(
+                f"Found {n_dups} duplicate genes: {dup_genes[:5]}{'...' if len(dup_genes) > 5 else ''}. "
+                f"Counts summed across duplicates."
+            )
 
         # Step 4: Transpose to samples × genes
         result = result.T
 
-        return result
+        return result, warnings
 
     else:
         raise ValueError(f"Unknown orientation: {orientation}")
+        return pd.DataFrame(), []
 
 
 def validate_for_de(df: pd.DataFrame) -> None:
@@ -876,12 +886,12 @@ class RNASeqParser:
         orientation = detect_orientation(
             df, gene_det.gene_column, gene_det.first_col_is_sample_id
         )
-        expression_df = convert_to_canonical_shape(
+        expression_df, conversion_warnings = convert_to_canonical_shape(
             df, gene_det.gene_column, orientation, gene_det.first_col_is_sample_id
         )
 
         # Validate if RAW_COUNTS
-        warnings = []
+        warnings = conversion_warnings
         if data_type == DataType.RAW_COUNTS:
             validate_for_de(expression_df)
 
