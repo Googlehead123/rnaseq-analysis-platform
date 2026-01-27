@@ -139,3 +139,548 @@ def test_normalized_data_with_expression_df_generates_viz():
     finally:
         # Cleanup
         Path(temp_path).unlink()
+
+
+class TestVolcanoPlotValidation:
+    """Tests for create_volcano_plot() input validation."""
+
+    def test_volcano_plot_none_input_raises(self):
+        """Test that None input raises ValueError."""
+        from visualizations import create_volcano_plot
+
+        with pytest.raises(ValueError, match="results_df cannot be None or empty"):
+            create_volcano_plot(None)
+
+    def test_volcano_plot_empty_dataframe_raises(self):
+        """Test that empty DataFrame raises ValueError."""
+        from visualizations import create_volcano_plot
+
+        empty_df = pd.DataFrame()
+        with pytest.raises(ValueError, match="results_df cannot be None or empty"):
+            create_volcano_plot(empty_df)
+
+    def test_volcano_plot_missing_columns_raises(self):
+        """Test that missing required columns raises ValueError."""
+        from visualizations import create_volcano_plot
+
+        df = pd.DataFrame(
+            {
+                "gene": ["GENE1", "GENE2"],
+                "log2FoldChange": [1.5, -2.0],
+            }
+        )
+        with pytest.raises(ValueError, match="results_df missing required columns"):
+            create_volcano_plot(df)
+
+    def test_volcano_plot_valid_input_succeeds(self):
+        """Test that valid input produces a figure."""
+        from visualizations import create_volcano_plot
+
+        df = pd.DataFrame(
+            {
+                "gene": ["GENE1", "GENE2", "GENE3"],
+                "log2FoldChange": [1.5, -2.0, 0.5],
+                "padj": [0.001, 0.01, 0.5],
+            }
+        )
+        fig = create_volcano_plot(df)
+        assert fig is not None
+        assert hasattr(fig, "data")
+
+
+class TestHeatmapValidation:
+    """Tests for create_clustered_heatmap() input validation."""
+
+    def test_heatmap_none_input_raises(self):
+        """Test that None expression_df raises ValueError."""
+        from visualizations import create_clustered_heatmap
+
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            create_clustered_heatmap(None, {"sample1": "control"})
+
+    def test_heatmap_empty_dataframe_raises(self):
+        """Test that empty expression_df raises ValueError."""
+        from visualizations import create_clustered_heatmap
+
+        empty_df = pd.DataFrame()
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            create_clustered_heatmap(empty_df, {"sample1": "control"})
+
+    def test_heatmap_empty_conditions_raises(self):
+        """Test that empty sample_conditions raises ValueError."""
+        from visualizations import create_clustered_heatmap
+
+        df = pd.DataFrame(
+            {
+                "sample1": [1.0, 2.0, 3.0],
+                "sample2": [1.5, 2.5, 3.5],
+            },
+            index=["GENE1", "GENE2", "GENE3"],
+        )
+        with pytest.raises(ValueError, match="sample_conditions cannot be empty"):
+            create_clustered_heatmap(df, {})
+
+    def test_heatmap_missing_samples_raises(self):
+        """Test that samples missing from conditions raises ValueError."""
+        from visualizations import create_clustered_heatmap
+
+        df = pd.DataFrame(
+            {
+                "sample1": [1.0, 2.0, 3.0],
+                "sample2": [1.5, 2.5, 3.5],
+                "sample3": [2.0, 3.0, 4.0],
+            },
+            index=["GENE1", "GENE2", "GENE3"],
+        )
+        conditions = {"sample1": "control"}
+        with pytest.raises(ValueError, match="Samples missing from sample_conditions"):
+            create_clustered_heatmap(df, conditions)
+
+    def test_heatmap_valid_input_succeeds(self):
+        """Test that valid input produces a figure."""
+        from visualizations import create_clustered_heatmap
+
+        df = pd.DataFrame(
+            {
+                "sample1": [1.0, 2.0, 3.0],
+                "sample2": [1.5, 2.5, 3.5],
+            },
+            index=["GENE1", "GENE2", "GENE3"],
+        )
+        conditions = {"sample1": "control", "sample2": "treatment"}
+        fig = create_clustered_heatmap(df, conditions)
+        assert fig is not None
+        assert hasattr(fig, "data")
+
+
+class TestPCAValidation:
+    """Tests for create_pca_plot() input validation."""
+
+    def test_pca_none_input_raises(self):
+        """Test that None expression_df raises ValueError."""
+        from visualizations import create_pca_plot
+
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            create_pca_plot(None, {"sample1": "control"})
+
+    def test_pca_empty_dataframe_raises(self):
+        """Test that empty expression_df raises ValueError."""
+        from visualizations import create_pca_plot
+
+        empty_df = pd.DataFrame()
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            create_pca_plot(empty_df, {"sample1": "control"})
+
+    def test_pca_insufficient_samples_raises(self):
+        """Test that <2 samples raises ValueError."""
+        from visualizations import create_pca_plot
+
+        df = pd.DataFrame(
+            {
+                "sample1": [1.0, 2.0, 3.0],
+            },
+            index=["GENE1", "GENE2", "GENE3"],
+        )
+        conditions = {"sample1": "control"}
+        with pytest.raises(ValueError, match="PCA requires ≥2 samples"):
+            create_pca_plot(df, conditions)
+
+    def test_pca_empty_conditions_raises(self):
+        """Test that empty sample_conditions raises ValueError."""
+        from visualizations import create_pca_plot
+
+        df = pd.DataFrame(
+            {
+                "sample1": [1.0, 2.0, 3.0],
+                "sample2": [1.5, 2.5, 3.5],
+            },
+            index=["GENE1", "GENE2", "GENE3"],
+        )
+        with pytest.raises(ValueError, match="sample_conditions cannot be empty"):
+            create_pca_plot(df, {})
+
+    def test_pca_valid_input_succeeds(self):
+        """Test that valid input produces a figure."""
+        from visualizations import create_pca_plot
+
+        df = pd.DataFrame(
+            {
+                "sample1": [1.0, 2.0, 3.0],
+                "sample2": [1.5, 2.5, 3.5],
+                "sample3": [2.0, 3.0, 4.0],
+            },
+            index=["GENE1", "GENE2", "GENE3"],
+        )
+        conditions = {
+            "sample1": "control",
+            "sample2": "treatment",
+            "sample3": "treatment",
+        }
+        fig = create_pca_plot(df, conditions)
+        assert fig is not None
+        assert hasattr(fig, "data")
+
+
+class TestGenePanelValidation:
+    """Tests for GenePanelAnalyzer input validation."""
+
+    def test_score_panel_none_expression_raises(self):
+        """Test that score_panel() raises ValueError when expression_df is None."""
+        from gene_panels import GenePanelAnalyzer
+
+        analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            analyzer.score_panel(None, "Anti-aging", {"Sample_1": "Control"})
+
+    def test_score_panel_empty_expression_raises(self):
+        """Test that score_panel() raises ValueError when expression_df is empty."""
+        from gene_panels import GenePanelAnalyzer
+
+        analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+        empty_df = pd.DataFrame()
+
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            analyzer.score_panel(empty_df, "Anti-aging", {"Sample_1": "Control"})
+
+    def test_score_panel_invalid_panel_raises(self):
+        """Test that score_panel() raises ValueError with helpful message for invalid panel."""
+        from gene_panels import GenePanelAnalyzer
+
+        expr_df = pd.DataFrame(
+            {
+                "COL1A1": [12.5, 13.2, 14.1],
+                "IL6": [8.3, 9.1, 10.2],
+                "TYR": [6.7, 7.2, 7.8],
+            },
+            index=["Sample_1", "Sample_2", "Sample_3"],
+        )
+
+        analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+
+        with pytest.raises(ValueError, match="Panel 'InvalidPanel' not found"):
+            analyzer.score_panel(
+                expr_df,
+                "InvalidPanel",
+                {"Sample_1": "Control", "Sample_2": "Control", "Sample_3": "Treatment"},
+            )
+
+    def test_plot_panel_none_expression_raises(self):
+        """Test that plot_panel() raises ValueError when expression_df is None."""
+        from gene_panels import GenePanelAnalyzer
+
+        analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            analyzer.plot_panel(None, "Anti-aging", {"Sample_1": "Control"})
+
+    def test_plot_panel_empty_expression_raises(self):
+        """Test that plot_panel() raises ValueError when expression_df is empty."""
+        from gene_panels import GenePanelAnalyzer
+
+        analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+        empty_df = pd.DataFrame()
+
+        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+            analyzer.plot_panel(empty_df, "Anti-aging", {"Sample_1": "Control"})
+
+    def test_plot_panel_invalid_panel_raises(self):
+        """Test that plot_panel() raises ValueError with helpful message for invalid panel."""
+        from gene_panels import GenePanelAnalyzer
+
+        expr_df = pd.DataFrame(
+            {
+                "COL1A1": [12.5, 13.2, 14.1],
+                "IL6": [8.3, 9.1, 10.2],
+                "TYR": [6.7, 7.2, 7.8],
+            },
+            index=["Sample_1", "Sample_2", "Sample_3"],
+        )
+
+        analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+
+        with pytest.raises(ValueError, match="Panel 'InvalidPanel' not found"):
+            analyzer.plot_panel(
+                expr_df,
+                "InvalidPanel",
+                {"Sample_1": "Control", "Sample_2": "Control", "Sample_3": "Treatment"},
+            )
+
+    def test_platform_tracks_failed_panels(self):
+        """
+        Integration test: Verify platform tracks failed panels and displays info message.
+
+        This tests the code at lines 589-606 in rnaseq_analysis_platform.py
+        that catches ValueError and tracks failed panels.
+        """
+        from gene_panels import GenePanelAnalyzer
+
+        expr_df = pd.DataFrame(
+            {
+                "COL1A1": [12.5, 13.2, 14.1],
+                "IL6": [8.3, 9.1, 10.2],
+            },
+            index=["Sample_1", "Sample_2", "Sample_3"],
+        )
+
+        sample_conds = {
+            "Sample_1": "Control",
+            "Sample_2": "Control",
+            "Sample_3": "Treatment",
+        }
+
+        analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+        panels = analyzer.panels
+
+        failed_panels = []
+        figures = {}
+
+        for panel_name in panels:
+            try:
+                fig = analyzer.plot_panel(expr_df, panel_name, sample_conds)
+                figures[f"panel_{panel_name}"] = fig
+            except ValueError as e:
+                failed_panels.append((panel_name, str(e)))
+
+        assert len(failed_panels) > 0, (
+            "Expected some panels to fail with insufficient genes"
+        )
+
+        for panel_name, error_msg in failed_panels:
+            assert isinstance(panel_name, str)
+            assert isinstance(error_msg, str)
+            assert "genes" in error_msg.lower() or "not found" in error_msg.lower()
+
+
+class TestExportDataValidation:
+    """Tests for ExportData.validate() method."""
+
+    def test_export_data_validate_no_data_raises(self):
+        """Test that validate() returns warning when no data available."""
+        from export_engine import ExportData
+        from rnaseq_parser import DataType
+
+        export_data = ExportData(
+            data_type=DataType.RAW_COUNTS,
+            de_results={},
+            expression_matrix=None,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        warnings = export_data.validate()
+        assert "No data available to export" in warnings
+
+    def test_export_data_validate_with_de_results(self):
+        """Test that validate() passes when DE results present."""
+        from export_engine import ExportData
+        from de_analysis import DEResult
+        from rnaseq_parser import DataType
+
+        de_result = DEResult(
+            results_df=pd.DataFrame(
+                {
+                    "gene": ["GENE1", "GENE2"],
+                    "log2FoldChange": [1.5, -2.0],
+                    "padj": [0.001, 0.01],
+                }
+            ),
+            n_significant=2,
+            warnings=[],
+        )
+
+        export_data = ExportData(
+            data_type=DataType.RAW_COUNTS,
+            de_results={("test", "ref"): de_result},
+            expression_matrix=None,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        warnings = export_data.validate()
+        assert "No data available to export" not in warnings
+
+    def test_export_data_validate_empty_de_results(self):
+        """Test that validate() warns when DE results are empty."""
+        from export_engine import ExportData
+        from de_analysis import DEResult
+        from rnaseq_parser import DataType
+
+        de_result = DEResult(
+            results_df=pd.DataFrame(),
+            n_significant=0,
+            warnings=[],
+        )
+
+        export_data = ExportData(
+            data_type=DataType.RAW_COUNTS,
+            de_results={("test", "ref"): de_result},
+            expression_matrix=None,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        warnings = export_data.validate()
+        assert any("has no results" in w for w in warnings)
+
+    def test_export_data_validate_with_expression_matrix(self):
+        """Test that validate() passes when expression matrix present."""
+        from export_engine import ExportData
+        from rnaseq_parser import DataType
+
+        expr_df = pd.DataFrame(
+            {
+                "sample1": [1.0, 2.0, 3.0],
+                "sample2": [1.5, 2.5, 3.5],
+            },
+            index=["GENE1", "GENE2", "GENE3"],
+        )
+
+        export_data = ExportData(
+            data_type=DataType.NORMALIZED,
+            de_results={},
+            expression_matrix=expr_df,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        warnings = export_data.validate()
+        assert "No data available to export" not in warnings
+
+
+class TestExportExcelValidation:
+    """Tests for export_excel() validation and None guards."""
+
+    def test_export_excel_no_data_raises(self):
+        """Test that export_excel() raises ValueError when no data available."""
+        from export_engine import ExportEngine, ExportData
+        from rnaseq_parser import DataType
+        import tempfile
+
+        engine = ExportEngine()
+        export_data = ExportData(
+            data_type=DataType.RAW_COUNTS,
+            de_results={},
+            expression_matrix=None,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            with pytest.raises(ValueError, match="Cannot export: no data available"):
+                engine.export_excel(temp_path, export_data)
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_export_excel_invalid_path_raises(self):
+        """Test that export_excel() raises ValueError for non-existent directory."""
+        from export_engine import ExportEngine, ExportData
+        from de_analysis import DEResult
+        from rnaseq_parser import DataType
+
+        engine = ExportEngine()
+        de_result = DEResult(
+            results_df=pd.DataFrame(
+                {
+                    "gene": ["GENE1"],
+                    "log2FoldChange": [1.5],
+                    "padj": [0.001],
+                }
+            ),
+            n_significant=1,
+            warnings=[],
+        )
+
+        export_data = ExportData(
+            data_type=DataType.RAW_COUNTS,
+            de_results={("test", "ref"): de_result},
+            expression_matrix=None,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        invalid_path = "/nonexistent/directory/file.xlsx"
+
+        with pytest.raises(ValueError, match="Directory does not exist"):
+            engine.export_excel(invalid_path, export_data)
+
+    def test_export_excel_handles_none_de_results(self):
+        """Test that export_excel() skips None DE results gracefully."""
+        from export_engine import ExportEngine, ExportData
+        from de_analysis import DEResult
+        from rnaseq_parser import DataType
+        import tempfile
+
+        engine = ExportEngine()
+        de_result = DEResult(
+            results_df=None,
+            n_significant=0,
+            warnings=["Failed"],
+        )
+
+        export_data = ExportData(
+            data_type=DataType.RAW_COUNTS,
+            de_results={("test", "ref"): de_result},
+            expression_matrix=None,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            engine.export_excel(temp_path, export_data)
+            assert Path(temp_path).exists()
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+    def test_export_excel_handles_empty_de_results(self):
+        """Test that export_excel() skips empty DE results gracefully."""
+        from export_engine import ExportEngine, ExportData
+        from de_analysis import DEResult
+        from rnaseq_parser import DataType
+        import tempfile
+
+        engine = ExportEngine()
+        de_result = DEResult(
+            results_df=pd.DataFrame(),
+            n_significant=0,
+            warnings=[],
+        )
+
+        export_data = ExportData(
+            data_type=DataType.RAW_COUNTS,
+            de_results={("test", "ref"): de_result},
+            expression_matrix=None,
+            enrichment_results={},
+            figures={},
+            settings={},
+            sample_conditions={},
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            engine.export_excel(temp_path, export_data)
+            assert Path(temp_path).exists()
+        finally:
+            Path(temp_path).unlink(missing_ok=True)

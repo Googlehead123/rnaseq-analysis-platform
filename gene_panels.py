@@ -96,12 +96,15 @@ class GenePanelAnalyzer:
             {"Control": -0.5, "Treatment": 1.2}  # Treatment upregulates panel
 
         Raises:
-            ValueError: If panel has < 2 available genes in expression_df
+            ValueError: If expression_df is None/empty or panel not found
         """
+        # Validate expression_df
+        if expression_df is None or expression_df.empty:
+            raise ValueError("expression_df cannot be None or empty")
+
         if panel_name not in self.panels:
-            raise ValueError(
-                f"Panel '{panel_name}' not found in config. Available: {list(self.panels.keys())}"
-            )
+            available = ", ".join(self.panels.keys())
+            raise ValueError(f"Panel '{panel_name}' not found. Available: {available}")
 
         # Step 1: Get genes in panel that exist in expression_df
         panel_genes = self.panels[panel_name]
@@ -155,15 +158,16 @@ class GenePanelAnalyzer:
         Returns:
             Plotly Figure with grouped bars (genes × conditions)
 
-        Example:
-            X-axis: Gene symbols
-            Y-axis: Mean log2 expression
-            Bars: Grouped by condition (Control, Treatment)
+        Raises:
+            ValueError: If expression_df is None/empty or panel not found
         """
+        # Validate expression_df
+        if expression_df is None or expression_df.empty:
+            raise ValueError("expression_df cannot be None or empty")
+
         if panel_name not in self.panels:
-            raise ValueError(
-                f"Panel '{panel_name}' not found in config. Available: {list(self.panels.keys())}"
-            )
+            available = ", ".join(self.panels.keys())
+            raise ValueError(f"Panel '{panel_name}' not found. Available: {available}")
 
         # Get genes in panel that exist in expression_df
         panel_genes = self.panels[panel_name]

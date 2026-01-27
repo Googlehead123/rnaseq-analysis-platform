@@ -586,14 +586,21 @@ with st.sidebar:
                         )
                         panels = analyzer.panels
 
+                        failed_panels = []
                         for panel_name in panels:
                             try:
                                 fig = analyzer.plot_panel(
                                     norm_counts, panel_name, sample_conds
                                 )
                                 figures[f"panel_{panel_name}"] = fig
-                            except ValueError:
-                                pass  # Skip panels with insufficient genes
+                            except ValueError as e:
+                                failed_panels.append((panel_name, str(e)))
+
+                        if failed_panels:
+                            panel_names = [p[0] for p in failed_panels]
+                            st.info(
+                                f"Gene panels unavailable: {', '.join(panel_names)}. Reason: insufficient genes in your data."
+                            )
                     except FileNotFoundError:
                         st.warning("Gene panels config not found.")
 
