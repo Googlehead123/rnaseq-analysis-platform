@@ -4,7 +4,6 @@
 from pathlib import Path
 
 import pandas as pd
-import pytest  # type: ignore[reportMissingImports]
 from rnaseq_parser import (
     ParseResult,
     DataType,
@@ -282,7 +281,7 @@ class TestParseMultiFormatExcel:
     def test_parse_multiformat_extracts_de_results(self):
         """DE results are extracted with canonical columns."""
         parser = RNASeqParser()
-        result = parser.parse_multiformat(self._multiformat_path())
+        result = parser.parse_multiformat(self._multiformat_path())  # type: ignore[reportArgumentType]
 
         assert result.de_results_df is not None
         assert 300 <= len(result.de_results_df) <= 340
@@ -293,7 +292,7 @@ class TestParseMultiFormatExcel:
     def test_parse_multiformat_extracts_counts(self):
         """Read_Count columns are extracted into expression matrix."""
         parser = RNASeqParser()
-        result = parser.parse_multiformat(self._multiformat_path())
+        result = parser.parse_multiformat(self._multiformat_path())  # type: ignore[reportArgumentType]
 
         assert result.expression_df is not None
         assert result.expression_df.shape[0] == 6
@@ -302,7 +301,7 @@ class TestParseMultiFormatExcel:
     def test_parse_multiformat_extracts_normalized(self):
         """TPM columns are extracted into normalized matrix."""
         parser = RNASeqParser()
-        result = parser.parse_multiformat(self._multiformat_path())
+        result = parser.parse_multiformat(self._multiformat_path())  # type: ignore[reportArgumentType]
 
         assert result.normalized_df is not None
         assert result.normalized_df.shape[0] == 6
@@ -311,7 +310,7 @@ class TestParseMultiFormatExcel:
     def test_parse_multiformat_all_datatypes_populated(self):
         """All three datatypes are populated with correct metadata."""
         parser = RNASeqParser()
-        result = parser.parse_multiformat(self._multiformat_path())
+        result = parser.parse_multiformat(self._multiformat_path())  # type: ignore[reportArgumentType]
 
         assert result.expression_df is not None
         assert result.de_results_df is not None
