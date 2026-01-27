@@ -193,6 +193,31 @@ with st.sidebar:
                 st.session_state["comparisons"] = []  # Reset comparisons
 
                 st.success(f"Loaded {result.data_type.value} data successfully!")
+
+                # Show detected data types for multi-format files
+                if (
+                    hasattr(result, "data_types_detected")
+                    and result.data_types_detected
+                ):
+                    if len(result.data_types_detected) > 1:
+                        st.success(
+                            f"✓ Multi-format file detected: {', '.join([dt.value for dt in result.data_types_detected])}"
+                        )
+
+                        with st.expander("📊 Data Extraction Details"):
+                            if result.de_results_df is not None:
+                                st.write(
+                                    f"- **DE Results**: {len(result.de_results_df)} genes with fold change and p-values"
+                                )
+                            if result.expression_df is not None:
+                                st.write(
+                                    f"- **Count Matrix**: {result.expression_df.shape[0]} samples × {result.expression_df.shape[1]} genes"
+                                )
+                            if result.normalized_df is not None:
+                                st.write(
+                                    f"- **Normalized Values**: {result.normalized_df.shape[0]} samples (TPM/FPKM)"
+                                )
+
                 if result.warnings:
                     for w in result.warnings:
                         st.warning(w)
@@ -220,6 +245,42 @@ with st.sidebar:
                 )
             elif result.de_results_df is not None:
                 st.dataframe(result.de_results_df.head())
+
+        # Auto-detect metadata for multiformat files
+        if (
+            hasattr(result, "data_types_detected")
+            and len(result.data_types_detected) > 1
+            and result.expression_df is not None
+            and not st.session_state["sample_metadata"]
+        ):
+            # Auto-detect conditions from column names (samples are row indices)
+            sample_names = result.expression_df.index.tolist()
+            detected_metadata = {}
+            detected_conditions = set()
+
+            # Parse sample names: {date}_{condition}_{timepoint}_Read_Count or similar
+            import re
+
+            for sample in sample_names:
+                # Try to extract condition from sample name pattern
+                # Pattern: something_CONDITION_something_Read_Count
+                # But sample names in expression_df might be just the full column name
+                # Let's try to match the pattern used in parser
+                match = re.match(r"^.+?_(.+?)_", sample)
+                if match:
+                    condition = match.group(1)
+                    detected_metadata[sample] = {"condition": condition}
+                    detected_conditions.add(condition)
+
+            if detected_metadata:
+                st.session_state["sample_metadata"] = detected_metadata
+                st.session_state["conditions"] = sorted(list(detected_conditions))
+                st.success(
+                    f"✓ Auto-detected conditions from file: {', '.join(sorted(detected_conditions))}"
+                )
+                st.info(
+                    f"Found {len(sample_names)} samples across {len(detected_conditions)} conditions"
+                )
 
         # Metadata Assignment (Only for RAW_COUNTS)
         if result.data_type == DataType.RAW_COUNTS:
@@ -389,7 +450,7 @@ with st.sidebar:
                     st.session_state["de_results"] = {
                         dummy_comp: DEResult(
                             results_df=result.de_results_df,
-                            normalized_counts=None,
+                            normalized_counts=result.normalized_df,  # Use if available
                             log_normalized_counts=None,
                             dds=None,
                             comparison=dummy_comp,
@@ -405,6 +466,12 @@ with st.sidebar:
                     }
                     st.session_state["active_comparison"] = dummy_comp
                     st.session_state["comparisons"] = [dummy_comp]
+
+                    # If multiformat, we also have expression data for heatmaps
+                    if result.normalized_df is not None:
+                        st.info(
+                            "✓ File contains both DE results and expression data - full visualizations available"
+                        )
 
                 elif result.data_type == DataType.NORMALIZED:
                     # No DE, just viz
@@ -468,15 +535,25 @@ with st.sidebar:
                 ):
                     first_res = next(iter(st.session_state["de_results"].values()))
                     norm_counts = first_res.log_normalized_counts
-                elif result.data_type == DataType.NORMALIZED:
-                    import numpy as np
+                elif (
+                    result.data_type == DataType.NORMALIZED
+                    or result.normalized_df is not None
+                ):
+                    # Prefer normalized_df (TPM/FPKM) over raw expression_df
+                    source_df = (
+                        result.normalized_df
+                        if result.normalized_df is not None
+                        else result.expression_df
+                    )
 
-                    if result.expression_df is None:
+                    if source_df is not None:
+                        import numpy as np
+
+                        norm_counts = np.log2(source_df + 1)
+                    else:
                         st.info(
                             "Heatmap and PCA visualizations unavailable: file contains only pre-analyzed DE results (no expression data)"
                         )
-                    else:
-                        norm_counts = np.log2(result.expression_df + 1)
 
                 if norm_counts is not None:
                     # Prepare sample conditions map
