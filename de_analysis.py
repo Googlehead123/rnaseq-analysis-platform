@@ -6,10 +6,13 @@ Implements "fit once, contrast many" model for efficient multi-comparison analys
 
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
+import logging
 import pandas as pd
 import numpy as np
 from pydeseq2.dds import DeseqDataSet
 from pydeseq2.ds import DeseqStats
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -105,11 +108,15 @@ class DEAnalysisEngine:
             Exception on failure (caller should catch and mark comparison as failed)
         """
         # Get design factor from dds
-        design_factor = (
-            dds.design_factors[0]
-            if isinstance(dds.design_factors, list)
-            else dds.design_factors
-        )
+        if isinstance(dds.design_factors, list):
+            if len(dds.design_factors) > 0:
+                design_factor = dds.design_factors[0]
+            else:
+                raise ValueError(
+                    "design_factors list is empty - cannot determine design factor"
+                )
+        else:
+            design_factor = dds.design_factors
 
         # Compute statistics for this contrast
         stat_res = DeseqStats(
@@ -163,8 +170,9 @@ class DEAnalysisEngine:
             dds, normalized_df, log_normalized_df = self.fit_model(
                 counts_df, metadata_df, design_factor
             )
-        except Exception as e:
+        except (ValueError, RuntimeError, TypeError) as e:
             # Model fit failed - all comparisons fail
+            logger.error(f"DE analysis model fit failed: {str(e)}", exc_info=True)
             for comparison in comparisons:
                 results[comparison] = DEResult(
                     results_df=pd.DataFrame(),  # Empty
@@ -184,8 +192,12 @@ class DEAnalysisEngine:
                     dds, test_cond, ref_cond, normalized_df, log_normalized_df
                 )
                 results[(test_cond, ref_cond)] = result
-            except Exception as e:
+            except (ValueError, RuntimeError, TypeError) as e:
                 # This comparison failed, but others may succeed
+                logger.error(
+                    f"DE analysis comparison ({test_cond} vs {ref_cond}) failed: {str(e)}",
+                    exc_info=True,
+                )
                 results[(test_cond, ref_cond)] = DEResult(
                     results_df=pd.DataFrame(),  # Empty
                     normalized_counts=normalized_df,  # Still provide normalized counts
