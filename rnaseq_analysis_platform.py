@@ -150,10 +150,11 @@ with st.sidebar:
     )
 
     if uploaded_file:
-        try:
-            # Save uploaded file to temp file for parser
-            import tempfile
+        # Save uploaded file to temp file for parser
+        import tempfile
 
+        tmp_path = None
+        try:
             suffix = f".{uploaded_file.name.split('.')[-1]}"
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(uploaded_file.getvalue())
@@ -249,15 +250,16 @@ with st.sidebar:
                     for w in result.warnings:
                         st.warning(w)
 
-            # Clean up temp file
-            os.unlink(tmp_path)
-
         except ParserValidationError as e:
             st.error(f"Error parsing file: {e.message}")
             if e.details:
                 st.json(e.details)
         except Exception as e:
             st.error(f"Unexpected error: {str(e)}")
+        finally:
+            # Clean up temp file on both success and error paths
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     # Only show setup if data is loaded
     if st.session_state["parsed_result"]:
@@ -790,36 +792,48 @@ if st.session_state["analysis_complete"]:
                 # Let's use a temp file.
                 import tempfile
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-                    engine.export_excel(tmp.name, export_data)
-                    tmp_path = tmp.name
+                tmp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        delete=False, suffix=".xlsx"
+                    ) as tmp:
+                        engine.export_excel(tmp.name, export_data)
+                        tmp_path = tmp.name
 
-                with open(tmp_path, "rb") as f:
-                    st.download_button(
-                        "Download Excel Report",
-                        f.read(),
-                        "rnaseq_results.xlsx",
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-                os.unlink(tmp_path)
+                    with open(tmp_path, "rb") as f:
+                        st.download_button(
+                            "Download Excel Report",
+                            f.read(),
+                            "rnaseq_results.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
 
     with col2:
         if st.button("Generate PDF Report"):
             with st.spinner("Generating PDF..."):
                 import tempfile
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    engine.export_pdf_report(tmp.name, export_data)
-                    tmp_path = tmp.name
+                tmp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        delete=False, suffix=".pdf"
+                    ) as tmp:
+                        engine.export_pdf_report(tmp.name, export_data)
+                        tmp_path = tmp.name
 
-                with open(tmp_path, "rb") as f:
-                    st.download_button(
-                        "Download PDF Report",
-                        f.read(),
-                        "rnaseq_report.pdf",
-                        "application/pdf",
-                    )
-                os.unlink(tmp_path)
+                    with open(tmp_path, "rb") as f:
+                        st.download_button(
+                            "Download PDF Report",
+                            f.read(),
+                            "rnaseq_report.pdf",
+                            "application/pdf",
+                        )
+                finally:
+                    if tmp_path and os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
 
 else:
     if not st.session_state["parsed_result"]:
