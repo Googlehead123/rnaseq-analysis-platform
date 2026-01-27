@@ -61,6 +61,30 @@ class ExportData:
     # Active comparison (for title/context in single-comparison views)
     active_comparison: Optional[Tuple[str, str]] = None
 
+    def validate(self) -> List[str]:
+        """
+        Validate export data completeness. Returns list of warnings.
+
+        Returns:
+            List of warning messages (empty if valid)
+        """
+        warnings = []
+
+        has_de = bool(self.de_results)
+        has_expr = (
+            self.expression_matrix is not None and len(self.expression_matrix) > 0
+        )
+
+        if not has_de and not has_expr:
+            warnings.append("No data available to export")
+
+        if self.de_results:
+            for comp, result in self.de_results.items():
+                if result.results_df is None or len(result.results_df) == 0:
+                    warnings.append(f"Comparison {comp} has no results")
+
+        return warnings
+
 
 class ExportEngine:
     """Excel export engine for RNA-seq analysis results."""
@@ -100,18 +124,34 @@ class ExportEngine:
         Args:
             filepath: Output Excel file path (.xlsx)
             export_data: Complete export data bundle
+
+        Raises:
+            ValueError: If no data available or directory does not exist
         """
+        # Validate export data
+        warnings = export_data.validate()
+        if "No data available" in " ".join(warnings):
+            raise ValueError("Cannot export: no data available")
+
+        # Check filepath writable
+        from pathlib import Path
+
+        parent = Path(filepath).parent
+        if not parent.exists():
+            raise ValueError(f"Directory does not exist: {parent}")
+
         with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
             if export_data.data_type == DataType.RAW_COUNTS:
                 # Write DE results per comparison
                 for (test, ref), de_result in export_data.de_results.items():
-                    # DE sheet
+                    if de_result.results_df is None or de_result.results_df.empty:
+                        continue
+
                     sheet_name = self.sanitize_sheet_name(f"DE_{test}_vs_{ref}")
                     de_result.results_df.to_excel(
                         writer, sheet_name=sheet_name, index=False
                     )
 
-                    # Significant genes sheet
                     sig_sheet = self.sanitize_sheet_name(f"Sig_{test}_vs_{ref}")
                     sig_genes = de_result.results_df[
                         de_result.results_df["padj"] < 0.05
@@ -123,7 +163,11 @@ class ExportEngine:
                     test,
                     ref,
                 ), enrich_result in export_data.enrichment_results.items():
-                    if enrich_result.error is None:
+                    if (
+                        enrich_result.error is None
+                        and enrich_result.go_results is not None
+                        and enrich_result.kegg_results is not None
+                    ):
                         go_sheet = self.sanitize_sheet_name(f"GO_{test}_vs_{ref}")
                         enrich_result.go_results.to_excel(
                             writer, sheet_name=go_sheet, index=False
@@ -137,29 +181,38 @@ class ExportEngine:
             elif export_data.data_type == DataType.NORMALIZED:
                 # Expression matrix only
                 if export_data.expression_matrix is not None:
-                    export_data.expression_matrix.to_excel(
-                        writer, sheet_name="Expression Matrix"
-                    )
+                    if not export_data.expression_matrix.empty:
+                        export_data.expression_matrix.to_excel(
+                            writer, sheet_name="Expression Matrix"
+                        )
 
             elif export_data.data_type == DataType.PRE_ANALYZED:
                 # Single DE result
                 if export_data.de_results:
                     de_result = list(export_data.de_results.values())[0]
-                    de_result.results_df.to_excel(
-                        writer, sheet_name="DE Results", index=False
-                    )
+                    if (
+                        de_result.results_df is not None
+                        and not de_result.results_df.empty
+                    ):
+                        de_result.results_df.to_excel(
+                            writer, sheet_name="DE Results", index=False
+                        )
 
-                    sig_genes = de_result.results_df[
-                        de_result.results_df["padj"] < 0.05
-                    ]
-                    sig_genes.to_excel(
-                        writer, sheet_name="Significant Genes", index=False
-                    )
+                        sig_genes = de_result.results_df[
+                            de_result.results_df["padj"] < 0.05
+                        ]
+                        sig_genes.to_excel(
+                            writer, sheet_name="Significant Genes", index=False
+                        )
 
                 # Enrichment if available
                 if export_data.enrichment_results:
                     enrich_result = list(export_data.enrichment_results.values())[0]
-                    if enrich_result.error is None:
+                    if (
+                        enrich_result.error is None
+                        and enrich_result.go_results is not None
+                        and enrich_result.kegg_results is not None
+                    ):
                         enrich_result.go_results.to_excel(
                             writer, sheet_name="GO Enrichment", index=False
                         )
@@ -308,7 +361,22 @@ class ExportEngine:
         Args:
             filepath: Output PDF file path
             export_data: Complete export data bundle
+
+        Raises:
+            ValueError: If no data available or directory does not exist
         """
+        # Validate export data
+        warnings = export_data.validate()
+        if "No data available" in " ".join(warnings):
+            raise ValueError("Cannot export: no data available")
+
+        # Check filepath writable
+        from pathlib import Path
+
+        parent = Path(filepath).parent
+        if not parent.exists():
+            raise ValueError(f"Directory does not exist: {parent}")
+
         doc = SimpleDocTemplate(filepath, pagesize=letter)
         styles = getSampleStyleSheet()
         story = []
@@ -382,24 +450,25 @@ class ExportEngine:
                 )
                 de_result = export_data.de_results[active]
 
-                # Add comparison name
-                if export_data.data_type == DataType.RAW_COUNTS:
-                    test, ref = active
-                    story.append(
-                        Paragraph(f"Comparison: {test} vs {ref}", styles["Normal"])
-                    )
-                    story.append(Spacer(1, 6))
+                if de_result.results_df is not None and not de_result.results_df.empty:
+                    # Add comparison name
+                    if export_data.data_type == DataType.RAW_COUNTS:
+                        test, ref = active
+                        story.append(
+                            Paragraph(f"Comparison: {test} vs {ref}", styles["Normal"])
+                        )
+                        story.append(Spacer(1, 6))
 
-                # Top 20 genes by padj
-                top_genes = de_result.results_df.nsmallest(20, "padj")[
-                    ["gene", "log2FoldChange", "padj"]
-                ].values.tolist()
+                    # Top 20 genes by padj
+                    top_genes = de_result.results_df.nsmallest(20, "padj")[
+                        ["gene", "log2FoldChange", "padj"]
+                    ].values.tolist()
 
-                table_data = [["Gene", "log2FC", "padj"]] + [
-                    [str(g), f"{fc:.2f}", f"{p:.2e}"] for g, fc, p in top_genes
-                ]
-                story.append(Table(table_data))
-                story.append(Spacer(1, 24))
+                    table_data = [["Gene", "log2FC", "padj"]] + [
+                        [str(g), f"{fc:.2f}", f"{p:.2e}"] for g, fc, p in top_genes
+                    ]
+                    story.append(Table(table_data))
+                    story.append(Spacer(1, 24))
         else:
             # NORMALIZED mode - omit DE section
             story.append(
@@ -415,7 +484,10 @@ class ExportEngine:
 
         # 4. Volcano plot (RAW_COUNTS and PRE_ANALYZED only)
         if export_data.data_type in [DataType.RAW_COUNTS, DataType.PRE_ANALYZED]:
-            if "volcano" in export_data.figures:
+            if (
+                "volcano" in export_data.figures
+                and export_data.figures["volcano"] is not None
+            ):
                 story.append(Paragraph("Volcano Plot", styles["Heading1"]))
                 story.append(Spacer(1, 6))
                 volcano_fig = export_data.figures["volcano"]
@@ -438,7 +510,11 @@ class ExportEngine:
                 )
                 enrich_result = export_data.enrichment_results[active]
 
-                if enrich_result.error is None:
+                if (
+                    enrich_result.error is None
+                    and enrich_result.go_results is not None
+                    and enrich_result.kegg_results is not None
+                ):
                     # GO results (top 10)
                     story.append(
                         Paragraph("GO Biological Process (Top 10)", styles["Heading2"])
@@ -478,7 +554,9 @@ class ExportEngine:
         # 6. Gene panels (RAW_COUNTS and NORMALIZED only - need expression matrix)
         if export_data.data_type in [DataType.RAW_COUNTS, DataType.NORMALIZED]:
             panel_figs = {
-                k: v for k, v in export_data.figures.items() if k.startswith("panel_")
+                k: v
+                for k, v in export_data.figures.items()
+                if k.startswith("panel_") and v is not None
             }
             if panel_figs:
                 story.append(Paragraph("Gene Panel Analysis", styles["Heading1"]))
@@ -501,7 +579,10 @@ class ExportEngine:
 
         # 7. Heatmap (RAW_COUNTS and NORMALIZED only)
         if export_data.data_type in [DataType.RAW_COUNTS, DataType.NORMALIZED]:
-            if "heatmap" in export_data.figures:
+            if (
+                "heatmap" in export_data.figures
+                and export_data.figures["heatmap"] is not None
+            ):
                 story.append(Paragraph("Clustered Heatmap", styles["Heading1"]))
                 story.append(Spacer(1, 6))
                 heatmap_fig = export_data.figures["heatmap"]
@@ -514,7 +595,7 @@ class ExportEngine:
 
         # 8. PCA (RAW_COUNTS and NORMALIZED only)
         if export_data.data_type in [DataType.RAW_COUNTS, DataType.NORMALIZED]:
-            if "pca" in export_data.figures:
+            if "pca" in export_data.figures and export_data.figures["pca"] is not None:
                 story.append(Paragraph("PCA Plot", styles["Heading1"]))
                 story.append(Spacer(1, 6))
                 pca_fig = export_data.figures["pca"]

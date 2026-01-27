@@ -487,6 +487,10 @@ class TestExportDataValidation:
                     "padj": [0.001, 0.01],
                 }
             ),
+            normalized_counts=None,
+            log_normalized_counts=None,
+            dds=None,
+            comparison=("test", "ref"),
             n_significant=2,
             warnings=[],
         )
@@ -512,6 +516,10 @@ class TestExportDataValidation:
 
         de_result = DEResult(
             results_df=pd.DataFrame(),
+            normalized_counts=None,
+            log_normalized_counts=None,
+            dds=None,
+            comparison=("test", "ref"),
             n_significant=0,
             warnings=[],
         )
@@ -600,6 +608,10 @@ class TestExportExcelValidation:
                     "padj": [0.001],
                 }
             ),
+            normalized_counts=None,
+            log_normalized_counts=None,
+            dds=None,
+            comparison=("test", "ref"),
             n_significant=1,
             warnings=[],
         )
@@ -629,6 +641,10 @@ class TestExportExcelValidation:
         engine = ExportEngine()
         de_result = DEResult(
             results_df=None,
+            normalized_counts=None,
+            log_normalized_counts=None,
+            dds=None,
+            comparison=("test", "ref"),
             n_significant=0,
             warnings=["Failed"],
         )
@@ -662,6 +678,10 @@ class TestExportExcelValidation:
         engine = ExportEngine()
         de_result = DEResult(
             results_df=pd.DataFrame(),
+            normalized_counts=None,
+            log_normalized_counts=None,
+            dds=None,
+            comparison=("test", "ref"),
             n_significant=0,
             warnings=[],
         )
