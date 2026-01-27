@@ -115,6 +115,29 @@ class TestParseResultMultiFormat:
 class TestDetectDEColumns:
     """Test pattern-based DE column detection."""
 
+    def test_detect_de_columns_collision_raises_error(self):
+        """Test that multiple comparisons with different prefixes raise error."""
+        import pytest
+        from rnaseq_parser import ParserValidationError
+
+        # DataFrame with columns from two different comparisons
+        df = pd.DataFrame(
+            {
+                "gene": ["Gene_A", "Gene_B", "Gene_C"],
+                "Bt10U/none.fc": [2.5, -1.3, 0.8],
+                "Bt10U/other.fc": [1.5, -0.8, 0.5],  # Different comparison
+                "Bt10U/none.bh.pval": [0.001, 0.05, 0.1],
+                "Bt10U/other.bh.pval": [0.002, 0.06, 0.15],  # Different comparison
+            }
+        )
+
+        # Should raise ParserValidationError due to prefix mismatch
+        with pytest.raises(ParserValidationError) as exc_info:
+            detect_de_columns(df)
+
+        assert "prefix mismatch" in str(exc_info.value).lower()
+        assert "multiple comparisons" in str(exc_info.value).lower()
+
     def test_detect_de_columns_pattern_fc(self):
         """Test detection of fold change column with pattern matching."""
         df = pd.DataFrame(

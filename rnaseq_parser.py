@@ -19,6 +19,7 @@ from typing import Optional, List, Tuple, Any, Union
 import pandas as pd
 import numpy as np
 import re
+import warnings
 
 
 # Gene column detection constants
@@ -332,6 +333,39 @@ def detect_data_type(df: pd.DataFrame) -> DataType:
     return DataType.NORMALIZED
 
 
+def _extract_prefix(canonical_name: str, col: str) -> str:
+    """Extract comparison prefix from DE column name."""
+    if canonical_name == "log2FoldChange":
+        return re.sub(
+            r"\.fc$|\.logFC$|\.log2FC$",
+            "",
+            col,
+            flags=re.IGNORECASE,
+        )
+    elif canonical_name == "padj":
+        return re.sub(
+            r"\.bh\.pval$|\.adj\.pval$|\.FDR$|\.qvalue$",
+            "",
+            col,
+            flags=re.IGNORECASE,
+        )
+    elif canonical_name == "pvalue":
+        return re.sub(
+            r"\.raw\.pval$|\.pval$|\.PValue$",
+            "",
+            col,
+            flags=re.IGNORECASE,
+        )
+    elif canonical_name == "baseMean":
+        return re.sub(
+            r"\.baseMean$|\.AveExpr$",
+            "",
+            col,
+            flags=re.IGNORECASE,
+        )
+    return col
+
+
 def detect_de_columns(df: pd.DataFrame) -> Tuple[dict[str, str], Optional[str]]:
     """
     Detect DE result columns using pattern matching or standard aliases.
@@ -344,38 +378,40 @@ def detect_de_columns(df: pd.DataFrame) -> Tuple[dict[str, str], Optional[str]]:
         - column_mapping: Dict mapping canonical names to actual column names
           e.g., {"log2FoldChange": "Bt10U/none.fc", "padj": "Bt10U/none.bh.pval"}
         - comparison_name: Extracted comparison name (e.g., "Bt10U/none") or None
+
+    Raises:
+        ParserValidationError: If multiple comparisons detected (prefix mismatch)
     """
     column_mapping = {}
     comparison_name = None
+    prefix_tracker = {}
 
     for canonical_name, patterns in DE_COLUMN_PATTERNS.items():
         for col in df.columns:
             for pattern in patterns:
                 if re.match(pattern, col, re.IGNORECASE):
-                    column_mapping[canonical_name] = col
+                    prefix = _extract_prefix(canonical_name, col)
 
+                    if prefix_tracker and comparison_name and prefix != comparison_name:
+                        raise ParserValidationError(
+                            f"Column prefix mismatch: {col} has prefix '{prefix}' but expected '{comparison_name}'. "
+                            "File appears to contain multiple comparisons which is not currently supported.",
+                            details={
+                                "found_prefixes": list(set(prefix_tracker.values()))
+                            },
+                        )
+
+                    if canonical_name in column_mapping:
+                        warnings.warn(
+                            f"Multiple {canonical_name} columns found: "
+                            f"{column_mapping[canonical_name]} and {col}. Using first match."
+                        )
+                        continue
+
+                    column_mapping[canonical_name] = col
+                    prefix_tracker[canonical_name] = prefix
                     if comparison_name is None:
-                        if canonical_name == "log2FoldChange":
-                            comparison_name = re.sub(
-                                r"\.fc$|\.logFC$|\.log2FC$",
-                                "",
-                                col,
-                                flags=re.IGNORECASE,
-                            )
-                        elif canonical_name == "padj":
-                            comparison_name = re.sub(
-                                r"\.bh\.pval$|\.adj\.pval$|\.FDR$|\.qvalue$",
-                                "",
-                                col,
-                                flags=re.IGNORECASE,
-                            )
-                        elif canonical_name == "pvalue":
-                            comparison_name = re.sub(
-                                r"\.raw\.pval$|\.pval$|\.PValue$",
-                                "",
-                                col,
-                                flags=re.IGNORECASE,
-                            )
+                        comparison_name = prefix
                     break
 
     if column_mapping:
