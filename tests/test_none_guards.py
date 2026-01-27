@@ -574,6 +574,119 @@ class TestExportDataValidation:
         assert "No data available to export" not in warnings
 
 
+def test_export_multiformat_includes_all_data():
+    """
+    RED TEST: Multi-format files should export ALL data types.
+
+    This test reproduces the bug where export_engine.py branches on data_type enum
+    instead of checking actual data presence. A file with all 3 data types
+    (DE results + expression matrix + normalized) should export all of them.
+
+    Expected behavior: Excel workbook has DE + Expression + Normalized sheets
+    Current behavior: Only exports based on data_type enum, losing data
+    """
+    from export_engine import ExportEngine, ExportData, EnrichmentResult
+    from de_analysis import DEResult
+    from rnaseq_parser import DataType
+    import tempfile
+    import openpyxl
+
+    engine = ExportEngine()
+
+    de_result = DEResult(
+        results_df=pd.DataFrame(
+            {
+                "gene": ["COL1A1", "IL6", "TYR"],
+                "log2FoldChange": [2.34, -1.89, 1.45],
+                "padj": [0.0001, 0.0023, 0.0456],
+                "baseMean": [1500.2, 450.8, 120.3],
+            }
+        ),
+        normalized_counts=None,
+        log_normalized_counts=None,
+        dds=None,
+        comparison=("test", "ref"),
+        n_significant=2,
+        warnings=[],
+    )
+
+    expression_matrix = pd.DataFrame(
+        {
+            "Sample_1": [12.5, 8.3, 6.7],
+            "Sample_2": [13.2, 9.1, 7.2],
+            "Sample_3": [14.1, 10.2, 7.8],
+        },
+        index=["COL1A1", "IL6", "TYR"],
+    )
+
+    enrich_result = EnrichmentResult(
+        go_results=pd.DataFrame(
+            {
+                "Term": ["GO:0001", "GO:0002"],
+                "Overlap": ["5/100", "3/50"],
+                "P-value": [0.001, 0.01],
+                "Adjusted P-value": [0.01, 0.05],
+                "Genes": ["GENE1;GENE2", "GENE3;GENE4"],
+            }
+        ),
+        kegg_results=pd.DataFrame(
+            {
+                "Term": ["hsa00001", "hsa00002"],
+                "Overlap": ["4/80", "2/40"],
+                "P-value": [0.002, 0.02],
+                "Adjusted P-value": [0.02, 0.1],
+                "Genes": ["GENE1;GENE3", "GENE2;GENE4"],
+            }
+        ),
+        genes_used=["GENE1", "GENE2", "GENE3", "GENE4"],
+        selection_note="2 genes (padj<0.05)",
+    )
+
+    export_data = ExportData(
+        data_type=DataType.RAW_COUNTS,
+        de_results={("test", "ref"): de_result},
+        expression_matrix=expression_matrix,
+        enrichment_results={("test", "ref"): enrich_result},
+        figures={},
+        settings={"padj_threshold": 0.05, "lfc_threshold": 1.0},
+        sample_conditions={
+            "Sample_1": "control",
+            "Sample_2": "test",
+            "Sample_3": "test",
+        },
+    )
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        temp_path = f.name
+
+    try:
+        engine.export_excel(temp_path, export_data)
+
+        wb = openpyxl.load_workbook(temp_path)
+        sheet_names = wb.sheetnames
+
+        assert any("DE_" in name for name in sheet_names), (
+            f"Missing DE results sheet. Sheets: {sheet_names}"
+        )
+
+        assert "Expression Matrix" in sheet_names, (
+            f"Missing Expression Matrix sheet. Sheets: {sheet_names}. "
+            "BUG: export_engine.py branches on data_type instead of checking "
+            "expression_matrix presence"
+        )
+
+        assert any("GO_" in name for name in sheet_names), (
+            f"Missing GO enrichment sheet. Sheets: {sheet_names}"
+        )
+
+        assert "Settings" in sheet_names, (
+            f"Missing Settings sheet. Sheets: {sheet_names}"
+        )
+
+    finally:
+        Path(temp_path).unlink(missing_ok=True)
+
+
 class TestExportExcelValidation:
     """Tests for export_excel() validation and None guards."""
 

@@ -141,7 +141,7 @@ class ExportEngine:
             raise ValueError(f"Directory does not exist: {parent}")
 
         with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
-            if export_data.data_type == DataType.RAW_COUNTS:
+            if export_data.de_results:
                 # Write DE results per comparison
                 for (test, ref), de_result in export_data.de_results.items():
                     if de_result.results_df is None or de_result.results_df.empty:
@@ -178,47 +178,11 @@ class ExportEngine:
                             writer, sheet_name=kegg_sheet, index=False
                         )
 
-            elif export_data.data_type == DataType.NORMALIZED:
-                # Expression matrix only
-                if export_data.expression_matrix is not None:
-                    if not export_data.expression_matrix.empty:
-                        export_data.expression_matrix.to_excel(
-                            writer, sheet_name="Expression Matrix"
-                        )
-
-            elif export_data.data_type == DataType.PRE_ANALYZED:
-                # Single DE result
-                if export_data.de_results:
-                    de_result = list(export_data.de_results.values())[0]
-                    if (
-                        de_result.results_df is not None
-                        and not de_result.results_df.empty
-                    ):
-                        de_result.results_df.to_excel(
-                            writer, sheet_name="DE Results", index=False
-                        )
-
-                        sig_genes = de_result.results_df[
-                            de_result.results_df["padj"] < 0.05
-                        ]
-                        sig_genes.to_excel(
-                            writer, sheet_name="Significant Genes", index=False
-                        )
-
-                # Enrichment if available
-                if export_data.enrichment_results:
-                    enrich_result = list(export_data.enrichment_results.values())[0]
-                    if (
-                        enrich_result.error is None
-                        and enrich_result.go_results is not None
-                        and enrich_result.kegg_results is not None
-                    ):
-                        enrich_result.go_results.to_excel(
-                            writer, sheet_name="GO Enrichment", index=False
-                        )
-                        enrich_result.kegg_results.to_excel(
-                            writer, sheet_name="KEGG Enrichment", index=False
-                        )
+            if export_data.expression_matrix is not None:
+                if not export_data.expression_matrix.empty:
+                    export_data.expression_matrix.to_excel(
+                        writer, sheet_name="Expression Matrix"
+                    )
 
             # Settings sheet (all modes)
             self._write_settings_sheet(writer, export_data)
@@ -435,176 +399,153 @@ class ExportEngine:
 
         story.append(Spacer(1, 24))
 
-        # 3. DE Results table (RAW_COUNTS and PRE_ANALYZED only)
-        if export_data.data_type in [DataType.RAW_COUNTS, DataType.PRE_ANALYZED]:
-            if export_data.de_results:
-                story.append(
-                    Paragraph("Top Differentially Expressed Genes", styles["Heading1"])
-                )
-                story.append(Spacer(1, 6))
-
-                # Get active comparison or first available
-                active = (
-                    export_data.active_comparison
-                    or list(export_data.de_results.keys())[0]
-                )
-                de_result = export_data.de_results[active]
-
-                if de_result.results_df is not None and not de_result.results_df.empty:
-                    # Add comparison name
-                    if export_data.data_type == DataType.RAW_COUNTS:
-                        test, ref = active
-                        story.append(
-                            Paragraph(f"Comparison: {test} vs {ref}", styles["Normal"])
-                        )
-                        story.append(Spacer(1, 6))
-
-                    # Top 20 genes by padj
-                    top_genes = de_result.results_df.nsmallest(20, "padj")[
-                        ["gene", "log2FoldChange", "padj"]
-                    ].values.tolist()
-
-                    table_data = [["Gene", "log2FC", "padj"]] + [
-                        [str(g), f"{fc:.2f}", f"{p:.2e}"] for g, fc, p in top_genes
-                    ]
-                    story.append(Table(table_data))
-                    story.append(Spacer(1, 24))
-        else:
-            # NORMALIZED mode - omit DE section
+        # 3. DE Results table
+        if export_data.de_results:
             story.append(
-                Paragraph("Differential Expression Analysis", styles["Heading1"])
+                Paragraph("Top Differentially Expressed Genes", styles["Heading1"])
             )
             story.append(Spacer(1, 6))
-            story.append(
-                Paragraph(
-                    "Section not available for normalized data.", styles["Normal"]
-                )
+
+            # Get active comparison or first available
+            active = (
+                export_data.active_comparison or list(export_data.de_results.keys())[0]
             )
+            de_result = export_data.de_results[active]
+
+            if de_result.results_df is not None and not de_result.results_df.empty:
+                # Add comparison name
+                if export_data.data_type == DataType.RAW_COUNTS:
+                    test, ref = active
+                    story.append(
+                        Paragraph(f"Comparison: {test} vs {ref}", styles["Normal"])
+                    )
+                    story.append(Spacer(1, 6))
+
+                # Top 20 genes by padj
+                top_genes = de_result.results_df.nsmallest(20, "padj")[
+                    ["gene", "log2FoldChange", "padj"]
+                ].values.tolist()
+
+                table_data = [["Gene", "log2FC", "padj"]] + [
+                    [str(g), f"{fc:.2f}", f"{p:.2e}"] for g, fc, p in top_genes
+                ]
+                story.append(Table(table_data))
+                story.append(Spacer(1, 24))
+
+        # 4. Volcano plot
+        if (
+            "volcano" in export_data.figures
+            and export_data.figures["volcano"] is not None
+        ):
+            story.append(Paragraph("Volcano Plot", styles["Heading1"]))
+            story.append(Spacer(1, 6))
+            volcano_fig = export_data.figures["volcano"]
+            png_bytes = volcano_fig.to_image(
+                format="png", scale=2, width=800, height=600
+            )
+            img_buffer = io.BytesIO(png_bytes)
+            story.append(Image(ImageReader(img_buffer), width=400, height=300))
             story.append(Spacer(1, 24))
 
-        # 4. Volcano plot (RAW_COUNTS and PRE_ANALYZED only)
-        if export_data.data_type in [DataType.RAW_COUNTS, DataType.PRE_ANALYZED]:
+        # 5. Pathway enrichment
+        if export_data.enrichment_results:
+            story.append(Paragraph("Pathway Enrichment", styles["Heading1"]))
+            story.append(Spacer(1, 6))
+
+            active = (
+                export_data.active_comparison
+                or list(export_data.enrichment_results.keys())[0]
+            )
+            enrich_result = export_data.enrichment_results[active]
+
             if (
-                "volcano" in export_data.figures
-                and export_data.figures["volcano"] is not None
+                enrich_result.error is None
+                and enrich_result.go_results is not None
+                and enrich_result.kegg_results is not None
             ):
-                story.append(Paragraph("Volcano Plot", styles["Heading1"]))
-                story.append(Spacer(1, 6))
-                volcano_fig = export_data.figures["volcano"]
-                png_bytes = volcano_fig.to_image(
-                    format="png", scale=2, width=800, height=600
+                # GO results (top 10)
+                story.append(
+                    Paragraph("GO Biological Process (Top 10)", styles["Heading2"])
                 )
-                img_buffer = io.BytesIO(png_bytes)
-                story.append(Image(ImageReader(img_buffer), width=400, height=300))
-                story.append(Spacer(1, 24))
-
-        # 5. Pathway enrichment (RAW_COUNTS and PRE_ANALYZED only)
-        if export_data.data_type in [DataType.RAW_COUNTS, DataType.PRE_ANALYZED]:
-            if export_data.enrichment_results:
-                story.append(Paragraph("Pathway Enrichment", styles["Heading1"]))
                 story.append(Spacer(1, 6))
-
-                active = (
-                    export_data.active_comparison
-                    or list(export_data.enrichment_results.keys())[0]
-                )
-                enrich_result = export_data.enrichment_results[active]
-
-                if (
-                    enrich_result.error is None
-                    and enrich_result.go_results is not None
-                    and enrich_result.kegg_results is not None
-                ):
-                    # GO results (top 10)
-                    story.append(
-                        Paragraph("GO Biological Process (Top 10)", styles["Heading2"])
-                    )
-                    story.append(Spacer(1, 6))
-                    go_top = enrich_result.go_results.head(10)[
-                        ["Term", "Adjusted P-value"]
-                    ].values.tolist()
-                    go_table = [["Term", "Adj. P-value"]] + [
-                        [term, f"{p:.2e}"] for term, p in go_top
-                    ]
-                    story.append(Table(go_table))
-                    story.append(Spacer(1, 12))
-
-                    # KEGG results (top 10)
-                    story.append(
-                        Paragraph("KEGG Pathways (Top 10)", styles["Heading2"])
-                    )
-                    story.append(Spacer(1, 6))
-                    kegg_top = enrich_result.kegg_results.head(10)[
-                        ["Term", "Adjusted P-value"]
-                    ].values.tolist()
-                    kegg_table = [["Term", "Adj. P-value"]] + [
-                        [term, f"{p:.2e}"] for term, p in kegg_top
-                    ]
-                    story.append(Table(kegg_table))
-                    story.append(Spacer(1, 24))
-                else:
-                    story.append(
-                        Paragraph(
-                            f"Enrichment analysis failed: {enrich_result.error}",
-                            styles["Normal"],
-                        )
-                    )
-                    story.append(Spacer(1, 24))
-
-        # 6. Gene panels (RAW_COUNTS and NORMALIZED only - need expression matrix)
-        if export_data.data_type in [DataType.RAW_COUNTS, DataType.NORMALIZED]:
-            panel_figs = {
-                k: v
-                for k, v in export_data.figures.items()
-                if k.startswith("panel_") and v is not None
-            }
-            if panel_figs:
-                story.append(Paragraph("Gene Panel Analysis", styles["Heading1"]))
-                story.append(Spacer(1, 6))
-                for panel_name, panel_fig in panel_figs.items():
-                    story.append(
-                        Paragraph(
-                            panel_name.replace("panel_", "").replace("_", " ").title(),
-                            styles["Heading2"],
-                        )
-                    )
-                    story.append(Spacer(1, 6))
-                    png_bytes = panel_fig.to_image(
-                        format="png", scale=2, width=800, height=600
-                    )
-                    img_buffer = io.BytesIO(png_bytes)
-                    story.append(Image(ImageReader(img_buffer), width=400, height=300))
-                    story.append(Spacer(1, 12))
+                go_top = enrich_result.go_results.head(10)[
+                    ["Term", "Adjusted P-value"]
+                ].values.tolist()
+                go_table = [["Term", "Adj. P-value"]] + [
+                    [term, f"{p:.2e}"] for term, p in go_top
+                ]
+                story.append(Table(go_table))
                 story.append(Spacer(1, 12))
 
-        # 7. Heatmap (RAW_COUNTS and NORMALIZED only)
-        if export_data.data_type in [DataType.RAW_COUNTS, DataType.NORMALIZED]:
-            if (
-                "heatmap" in export_data.figures
-                and export_data.figures["heatmap"] is not None
-            ):
-                story.append(Paragraph("Clustered Heatmap", styles["Heading1"]))
+                # KEGG results (top 10)
+                story.append(Paragraph("KEGG Pathways (Top 10)", styles["Heading2"]))
                 story.append(Spacer(1, 6))
-                heatmap_fig = export_data.figures["heatmap"]
-                png_bytes = heatmap_fig.to_image(
-                    format="png", scale=2, width=800, height=600
+                kegg_top = enrich_result.kegg_results.head(10)[
+                    ["Term", "Adjusted P-value"]
+                ].values.tolist()
+                kegg_table = [["Term", "Adj. P-value"]] + [
+                    [term, f"{p:.2e}"] for term, p in kegg_top
+                ]
+                story.append(Table(kegg_table))
+                story.append(Spacer(1, 24))
+            else:
+                story.append(
+                    Paragraph(
+                        f"Enrichment analysis failed: {enrich_result.error}",
+                        styles["Normal"],
+                    )
                 )
-                img_buffer = io.BytesIO(png_bytes)
-                story.append(Image(ImageReader(img_buffer), width=400, height=300))
                 story.append(Spacer(1, 24))
 
-        # 8. PCA (RAW_COUNTS and NORMALIZED only)
-        if export_data.data_type in [DataType.RAW_COUNTS, DataType.NORMALIZED]:
-            if "pca" in export_data.figures and export_data.figures["pca"] is not None:
-                story.append(Paragraph("PCA Plot", styles["Heading1"]))
+        # 6. Gene panels
+        panel_figs = {
+            k: v
+            for k, v in export_data.figures.items()
+            if k.startswith("panel_") and v is not None
+        }
+        if panel_figs:
+            story.append(Paragraph("Gene Panel Analysis", styles["Heading1"]))
+            story.append(Spacer(1, 6))
+            for panel_name, panel_fig in panel_figs.items():
+                story.append(
+                    Paragraph(
+                        panel_name.replace("panel_", "").replace("_", " ").title(),
+                        styles["Heading2"],
+                    )
+                )
                 story.append(Spacer(1, 6))
-                pca_fig = export_data.figures["pca"]
-                png_bytes = pca_fig.to_image(
+                png_bytes = panel_fig.to_image(
                     format="png", scale=2, width=800, height=600
                 )
                 img_buffer = io.BytesIO(png_bytes)
                 story.append(Image(ImageReader(img_buffer), width=400, height=300))
-                story.append(Spacer(1, 24))
+                story.append(Spacer(1, 12))
+            story.append(Spacer(1, 12))
+
+        # 7. Heatmap
+        if (
+            "heatmap" in export_data.figures
+            and export_data.figures["heatmap"] is not None
+        ):
+            story.append(Paragraph("Clustered Heatmap", styles["Heading1"]))
+            story.append(Spacer(1, 6))
+            heatmap_fig = export_data.figures["heatmap"]
+            png_bytes = heatmap_fig.to_image(
+                format="png", scale=2, width=800, height=600
+            )
+            img_buffer = io.BytesIO(png_bytes)
+            story.append(Image(ImageReader(img_buffer), width=400, height=300))
+            story.append(Spacer(1, 24))
+
+        # 8. PCA
+        if "pca" in export_data.figures and export_data.figures["pca"] is not None:
+            story.append(Paragraph("PCA Plot", styles["Heading1"]))
+            story.append(Spacer(1, 6))
+            pca_fig = export_data.figures["pca"]
+            png_bytes = pca_fig.to_image(format="png", scale=2, width=800, height=600)
+            img_buffer = io.BytesIO(png_bytes)
+            story.append(Image(ImageReader(img_buffer), width=400, height=300))
+            story.append(Spacer(1, 24))
 
         # Build PDF
         doc.build(story)
