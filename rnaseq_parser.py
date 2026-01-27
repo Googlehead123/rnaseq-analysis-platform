@@ -1,3 +1,4 @@
+# pyright: reportMissingTypeArgument=false
 from __future__ import annotations
 
 """
@@ -13,7 +14,8 @@ Canonical output: samples × genes DataFrame (sample names as index, gene symbol
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, List, Tuple, Any
+from os import PathLike
+from typing import Optional, List, Tuple, Any, Union
 import pandas as pd
 import numpy as np
 import re
@@ -81,9 +83,9 @@ class DataType(Enum):
 class ParserValidationError(Exception):
     """Raised when parsed data fails validation checks."""
 
-    def __init__(self, message: str, details: Optional[Any] = None):
+    def __init__(self, message: str, details: Optional[dict[str, Any]] = None):
         self.message: str = message
-        self.details: Any = details or {}
+        self.details: dict[str, Any] = details or {}
         super().__init__(self.message)
 
 
@@ -106,8 +108,8 @@ class SampleColumnInfo:
     count_columns: List[str]
     fpkm_columns: List[str]
     tpm_columns: List[str]
-    conditions_detected: Any
-    sample_to_condition: Any
+    conditions_detected: set[str]
+    sample_to_condition: dict[str, str]
 
 
 @dataclass
@@ -330,7 +332,7 @@ def detect_data_type(df: pd.DataFrame) -> DataType:
     return DataType.NORMALIZED
 
 
-def detect_de_columns(df: pd.DataFrame) -> Tuple[Any, Optional[str]]:
+def detect_de_columns(df: pd.DataFrame) -> Tuple[dict[str, str], Optional[str]]:
     """
     Detect DE result columns using pattern matching or standard aliases.
 
@@ -675,8 +677,9 @@ class RNASeqParser:
                 return col
         return None
 
-    def parse_multiformat(self, file_path: str) -> ParseResult:
+    def parse_multiformat(self, file_path: Union[str, PathLike[str]]) -> ParseResult:
         """Parse multi-format Excel with DE results + counts + normalized."""
+        file_path = str(file_path)
         df = parse_excel(file_path)
 
         de_mapping, comparison_name = detect_de_columns(df)

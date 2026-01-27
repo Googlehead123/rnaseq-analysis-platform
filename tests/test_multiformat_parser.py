@@ -1,4 +1,4 @@
-# pyright: ignore
+# pyright: reportMissingImports=false, reportArgumentType=false
 """Tests for multi-format ParseResult support."""
 
 from pathlib import Path
