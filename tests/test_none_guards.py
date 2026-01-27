@@ -148,7 +148,9 @@ class TestVolcanoPlotValidation:
         """Test that None input raises ValueError."""
         from visualizations import create_volcano_plot
 
-        with pytest.raises(ValueError, match="results_df cannot be None or empty"):
+        with pytest.raises(
+            ValueError, match="Cannot create volcano plot.*empty or None"
+        ):
             create_volcano_plot(None)
 
     def test_volcano_plot_empty_dataframe_raises(self):
@@ -156,7 +158,9 @@ class TestVolcanoPlotValidation:
         from visualizations import create_volcano_plot
 
         empty_df = pd.DataFrame()
-        with pytest.raises(ValueError, match="results_df cannot be None or empty"):
+        with pytest.raises(
+            ValueError, match="Cannot create volcano plot.*empty or None"
+        ):
             create_volcano_plot(empty_df)
 
     def test_volcano_plot_missing_columns_raises(self):
@@ -169,7 +173,9 @@ class TestVolcanoPlotValidation:
                 "log2FoldChange": [1.5, -2.0],
             }
         )
-        with pytest.raises(ValueError, match="results_df missing required columns"):
+        with pytest.raises(
+            ValueError, match="Cannot create volcano plot.*missing required columns"
+        ):
             create_volcano_plot(df)
 
     def test_volcano_plot_valid_input_succeeds(self):
@@ -195,7 +201,7 @@ class TestHeatmapValidation:
         """Test that None expression_df raises ValueError."""
         from visualizations import create_clustered_heatmap
 
-        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+        with pytest.raises(ValueError, match="Cannot create heatmap.*empty or None"):
             create_clustered_heatmap(None, {"sample1": "control"})
 
     def test_heatmap_empty_dataframe_raises(self):
@@ -203,7 +209,7 @@ class TestHeatmapValidation:
         from visualizations import create_clustered_heatmap
 
         empty_df = pd.DataFrame()
-        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+        with pytest.raises(ValueError, match="Cannot create heatmap.*empty or None"):
             create_clustered_heatmap(empty_df, {"sample1": "control"})
 
     def test_heatmap_empty_conditions_raises(self):
@@ -217,7 +223,7 @@ class TestHeatmapValidation:
             },
             index=["GENE1", "GENE2", "GENE3"],
         )
-        with pytest.raises(ValueError, match="sample_conditions cannot be empty"):
+        with pytest.raises(ValueError, match="Cannot create heatmap.*empty"):
             create_clustered_heatmap(df, {})
 
     def test_heatmap_missing_samples_raises(self):
@@ -233,7 +239,9 @@ class TestHeatmapValidation:
             index=["GENE1", "GENE2", "GENE3"],
         )
         conditions = {"sample1": "control"}
-        with pytest.raises(ValueError, match="Samples missing from sample_conditions"):
+        with pytest.raises(
+            ValueError, match="Cannot create heatmap.*missing from sample_conditions"
+        ):
             create_clustered_heatmap(df, conditions)
 
     def test_heatmap_valid_input_succeeds(self):
@@ -260,7 +268,7 @@ class TestPCAValidation:
         """Test that None expression_df raises ValueError."""
         from visualizations import create_pca_plot
 
-        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+        with pytest.raises(ValueError, match="Cannot create PCA plot.*empty or None"):
             create_pca_plot(None, {"sample1": "control"})
 
     def test_pca_empty_dataframe_raises(self):
@@ -268,7 +276,7 @@ class TestPCAValidation:
         from visualizations import create_pca_plot
 
         empty_df = pd.DataFrame()
-        with pytest.raises(ValueError, match="expression_df cannot be None or empty"):
+        with pytest.raises(ValueError, match="Cannot create PCA plot.*empty or None"):
             create_pca_plot(empty_df, {"sample1": "control"})
 
     def test_pca_insufficient_samples_raises(self):
@@ -282,7 +290,9 @@ class TestPCAValidation:
             index=["GENE1", "GENE2", "GENE3"],
         )
         conditions = {"sample1": "control"}
-        with pytest.raises(ValueError, match="PCA requires ≥2 samples"):
+        with pytest.raises(
+            ValueError, match="Cannot create PCA plot.*at least 2 samples"
+        ):
             create_pca_plot(df, conditions)
 
     def test_pca_empty_conditions_raises(self):
@@ -296,7 +306,7 @@ class TestPCAValidation:
             },
             index=["GENE1", "GENE2", "GENE3"],
         )
-        with pytest.raises(ValueError, match="sample_conditions cannot be empty"):
+        with pytest.raises(ValueError, match="Cannot create PCA plot.*empty"):
             create_pca_plot(df, {})
 
     def test_pca_valid_input_succeeds(self):

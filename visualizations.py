@@ -30,12 +30,27 @@ def create_volcano_plot(
     """
     # Validate input
     if results_df is None or results_df.empty:
-        raise ValueError("results_df cannot be None or empty")
+        raise ValueError(
+            "Cannot create volcano plot: results_df is empty or None. "
+            "Ensure your differential expression analysis produced results. "
+            "Check that your input data has samples and genes."
+        )
 
     required_cols = ["gene", "log2FoldChange", "padj"]
     missing = [col for col in required_cols if col not in results_df.columns]
     if missing:
-        raise ValueError(f"results_df missing required columns: {missing}")
+        available = ", ".join(results_df.columns.tolist()[:5])
+        extra = (
+            f"... ({len(results_df.columns) - 5} more)"
+            if len(results_df.columns) > 5
+            else ""
+        )
+        raise ValueError(
+            f"Cannot create volcano plot: missing required columns {missing}. "
+            f"Found columns: {available}{extra}. "
+            f"Suggestion: Ensure your DE results contain 'gene', 'log2FoldChange' (or 'log2FC'), "
+            f"and 'padj' (or 'FDR', 'adjusted_pvalue'). Check column names for typos."
+        )
 
     # Add -log10(padj) column
     df = results_df.copy()
@@ -111,15 +126,30 @@ def create_clustered_heatmap(
     """
     # Validate input
     if expression_df is None or expression_df.empty:
-        raise ValueError("expression_df cannot be None or empty")
+        raise ValueError(
+            "Cannot create heatmap: expression_df is empty or None. "
+            "Ensure your expression data contains samples and genes."
+        )
 
     if not sample_conditions:
-        raise ValueError("sample_conditions cannot be empty")
+        raise ValueError(
+            "Cannot create heatmap: sample_conditions is empty. "
+            "Provide a mapping of sample names to experimental conditions."
+        )
 
     missing_samples = [s for s in expression_df.columns if s not in sample_conditions]
     if missing_samples:
+        provided = ", ".join(list(sample_conditions.keys())[:3])
+        extra = (
+            f"... ({len(sample_conditions) - 3} more)"
+            if len(sample_conditions) > 3
+            else ""
+        )
         raise ValueError(
-            f"Samples missing from sample_conditions: {missing_samples[:5]}"
+            f"Cannot create heatmap: {len(missing_samples)} samples missing from sample_conditions. "
+            f"Missing: {', '.join(missing_samples[:3])}{'...' if len(missing_samples) > 3 else ''}. "
+            f"Provided conditions for: {provided}{extra}. "
+            f"Suggestion: Ensure all sample names in expression_df are mapped in sample_conditions."
         )
 
     # Gene selection: prioritize DE genes, fallback to variance
@@ -197,13 +227,23 @@ def create_pca_plot(
     """
     # Validate input
     if expression_df is None or expression_df.empty:
-        raise ValueError("expression_df cannot be None or empty")
+        raise ValueError(
+            "Cannot create PCA plot: expression_df is empty or None. "
+            "Ensure your expression data contains samples and genes."
+        )
 
     if expression_df.shape[1] < 2:
-        raise ValueError(f"PCA requires ≥2 samples, got {expression_df.shape[1]}")
+        raise ValueError(
+            f"Cannot create PCA plot: requires at least 2 samples, but got {expression_df.shape[1]}. "
+            f"Suggestion: PCA needs multiple samples to compute principal components. "
+            f"Ensure your expression data has at least 2 samples."
+        )
 
     if not sample_conditions:
-        raise ValueError("sample_conditions cannot be empty")
+        raise ValueError(
+            "Cannot create PCA plot: sample_conditions is empty. "
+            "Provide a mapping of sample names to experimental conditions for coloring."
+        )
 
     # Run PCA (samples × genes → PC space)
     pca = PCA(n_components=min(3, expression_df.shape[0]))

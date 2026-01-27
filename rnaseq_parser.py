@@ -533,7 +533,10 @@ def validate_for_de(df: pd.DataFrame) -> None:
     if (numeric_cols < 0).any().any():
         negative_count = (numeric_cols < 0).sum().sum()
         raise ParserValidationError(
-            "Count matrices cannot contain negative values",
+            f"Count matrices cannot contain negative values. Found {int(negative_count)} negative values. "
+            f"Suggestion: Check if your data has been log-transformed or normalized. "
+            f"PyDESeq2 requires raw count data (non-negative integers). "
+            f"If you have normalized data, use the 'normalized' data type instead.",
             details={"negative_count": int(negative_count)},
         )
 
@@ -561,27 +564,44 @@ def parse_csv(file_path: str) -> pd.DataFrame:
 
         # Validate minimum requirements
         if df.empty:
-            raise ParserValidationError("File is empty")
+            raise ParserValidationError(
+                "File is empty. Ensure your file contains data rows with gene names and sample columns."
+            )
 
         if len(df.columns) < 2:
             raise ParserValidationError(
-                "File must have at least 2 columns (genes + samples)",
+                f"File must have at least 2 columns (genes + samples), but found {len(df.columns)}. "
+                f"Suggestion: Check if your file uses the correct delimiter (comma for CSV, tab for TSV). "
+                f"If using Excel, export as CSV first.",
                 details={"columns": len(df.columns)},
             )
 
         return df
 
     except pd.errors.EmptyDataError:
-        raise ParserValidationError("File is empty")
+        raise ParserValidationError(
+            "File is empty or contains no readable data. "
+            "Ensure your file has at least one row of data with gene names and sample values."
+        )
     except pd.errors.ParserError as e:
-        raise ParserValidationError(f"Failed to parse CSV: {str(e)}")
+        raise ParserValidationError(
+            f"Failed to parse CSV file: {str(e)}. "
+            f"Suggestion: Verify the file format is valid CSV/TSV. "
+            f"Check for special characters or encoding issues. Try opening in a text editor to inspect."
+        )
     except FileNotFoundError:
-        raise ParserValidationError(f"File not found: {file_path}")
+        raise ParserValidationError(
+            f"File not found: {file_path}. "
+            f"Suggestion: Check the file path is correct and the file exists in the specified location."
+        )
     except Exception as e:
         # Don't re-raise ParserValidationError
         if isinstance(e, ParserValidationError):
             raise
-        raise ParserValidationError(f"Error reading file: {str(e)}")
+        raise ParserValidationError(
+            f"Error reading file: {str(e)}. "
+            f"Suggestion: Ensure the file is not corrupted and is in a supported format (CSV, TSV, or Excel)."
+        )
 
 
 def parse_excel(file_path: str, sheet_name: Optional[str] = None) -> pd.DataFrame:
@@ -591,8 +611,10 @@ def parse_excel(file_path: str, sheet_name: Optional[str] = None) -> pd.DataFram
 
         if sheet_name:
             if sheet_name not in excel_file.sheet_names:
+                available = ", ".join(excel_file.sheet_names[:5])
                 raise ParserValidationError(
-                    f"Sheet '{sheet_name}' not found",
+                    f"Sheet '{sheet_name}' not found. Available sheets: {available}{'...' if len(excel_file.sheet_names) > 5 else ''}. "
+                    f"Suggestion: Check the sheet name spelling or select a different sheet.",
                     details={"available_sheets": excel_file.sheet_names},
                 )
             df = pd.read_excel(file_path, sheet_name=sheet_name)
@@ -600,11 +622,14 @@ def parse_excel(file_path: str, sheet_name: Optional[str] = None) -> pd.DataFram
             df = pd.read_excel(file_path, sheet_name=0)
 
         if df.empty:
-            raise ParserValidationError("Sheet is empty")
+            raise ParserValidationError(
+                "Sheet is empty. Ensure the selected sheet contains data rows with gene names and sample columns."
+            )
 
         if len(df.columns) < 2:
             raise ParserValidationError(
-                "Sheet must have at least 2 columns",
+                f"Sheet must have at least 2 columns (genes + samples), but found {len(df.columns)}. "
+                f"Suggestion: Verify you selected the correct sheet with count data, not a metadata sheet.",
                 details={"columns": len(df.columns)},
             )
 
@@ -615,17 +640,25 @@ def parse_excel(file_path: str, sheet_name: Optional[str] = None) -> pd.DataFram
             )
             if non_numeric_pct > 0.5:
                 raise ParserValidationError(
-                    "First sheet appears to be metadata, not count data"
+                    "First sheet appears to be metadata (mostly text), not count data. "
+                    "Suggestion: Select a different sheet containing the count matrix with gene names and numeric sample columns."
                 )
 
         return df
 
     except FileNotFoundError:
-        raise ParserValidationError(f"File not found: {file_path}")
+        raise ParserValidationError(
+            f"File not found: {file_path}. "
+            f"Suggestion: Check the file path is correct and the file exists."
+        )
     except Exception as e:
         if isinstance(e, ParserValidationError):
             raise
-        raise ParserValidationError(f"Error reading Excel: {str(e)}")
+        raise ParserValidationError(
+            f"Error reading Excel file: {str(e)}. "
+            f"Suggestion: Ensure the file is a valid Excel (.xlsx) file and not corrupted. "
+            f"Try opening it in Excel to verify it's readable."
+        )
 
 
 def normalize_de_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -640,8 +673,13 @@ def normalize_de_columns(df: pd.DataFrame) -> pd.DataFrame:
     required = ["gene", "log2FoldChange", "padj"]
     missing = [col for col in required if col not in df.columns]
     if missing:
+        available_str = ", ".join(df.columns.tolist()[:10])
+        extra = f"... ({len(df.columns) - 10} more)" if len(df.columns) > 10 else ""
         raise ParserValidationError(
-            "Pre-analyzed file must contain gene, log2FoldChange, and padj columns",
+            f"Pre-analyzed file missing required columns: {', '.join(missing)}. "
+            f"Found columns: {available_str}{extra}. "
+            f"Suggestion: Ensure your file contains 'gene' (gene names), 'log2FoldChange' (or 'log2FC', 'logFC'), "
+            f"and 'padj' (or 'FDR', 'adjusted_pvalue'). Check column names for typos or alternative naming conventions.",
             details={"missing": missing, "available": df.columns.tolist()},
         )
 
