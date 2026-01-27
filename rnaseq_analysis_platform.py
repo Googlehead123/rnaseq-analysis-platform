@@ -204,18 +204,45 @@ with st.sidebar:
                             f"✓ Multi-format file detected: {', '.join([dt.value for dt in result.data_types_detected])}"
                         )
 
-                        with st.expander("📊 Data Extraction Details"):
+                        with st.expander("📊 Data Extraction Details", expanded=True):
+                            st.write("**Detected Data Types:**")
+                            for dtype in result.data_types_detected:
+                                st.write(f"✓ {dtype.value}")
+
                             if result.de_results_df is not None:
                                 st.write(
-                                    f"- **DE Results**: {len(result.de_results_df)} genes with fold change and p-values"
+                                    f"\n**DE Results:** {len(result.de_results_df)} genes"
                                 )
+                                # Show column mapping
+                                st.write("**Column Mapping:**")
+                                col_mapping = {}
+                                for col in result.de_results_df.columns:
+                                    if "fold" in col.lower() or "fc" in col.lower():
+                                        col_mapping["log2FoldChange"] = col
+                                    elif "padj" in col.lower() or "adj" in col.lower():
+                                        col_mapping["padj"] = col
+                                    elif (
+                                        "pval" in col.lower() or "pvalue" in col.lower()
+                                    ):
+                                        col_mapping["pvalue"] = col
+
+                                if col_mapping:
+                                    for mapped, original in col_mapping.items():
+                                        st.code(f"{original} → {mapped}")
+                                else:
+                                    st.code(
+                                        "Columns: "
+                                        + ", ".join(result.de_results_df.columns[:5])
+                                    )
+
                             if result.expression_df is not None:
                                 st.write(
-                                    f"- **Count Matrix**: {result.expression_df.shape[0]} samples × {result.expression_df.shape[1]} genes"
+                                    f"\n**Expression Matrix:** {result.expression_df.shape[0]} samples × {result.expression_df.shape[1]} genes"
                                 )
+
                             if result.normalized_df is not None:
                                 st.write(
-                                    f"- **Normalized Values**: {result.normalized_df.shape[0]} samples (TPM/FPKM)"
+                                    f"\n**Normalized Values:** {result.normalized_df.shape[0]} samples (TPM/FPKM)"
                                 )
 
                 if result.warnings:
