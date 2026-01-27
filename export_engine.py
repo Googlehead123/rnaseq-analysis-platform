@@ -407,30 +407,31 @@ class ExportEngine:
             story.append(Spacer(1, 6))
 
             # Get active comparison or first available
-            active = (
-                export_data.active_comparison or list(export_data.de_results.keys())[0]
+            active = export_data.active_comparison or next(
+                iter(export_data.de_results.keys()), None
             )
-            de_result = export_data.de_results[active]
+            if active is not None:
+                de_result = export_data.de_results[active]
 
-            if de_result.results_df is not None and not de_result.results_df.empty:
-                # Add comparison name
-                if export_data.data_type == DataType.RAW_COUNTS:
-                    test, ref = active
-                    story.append(
-                        Paragraph(f"Comparison: {test} vs {ref}", styles["Normal"])
-                    )
-                    story.append(Spacer(1, 6))
+                if de_result.results_df is not None and not de_result.results_df.empty:
+                    # Add comparison name
+                    if export_data.data_type == DataType.RAW_COUNTS:
+                        test, ref = active
+                        story.append(
+                            Paragraph(f"Comparison: {test} vs {ref}", styles["Normal"])
+                        )
+                        story.append(Spacer(1, 6))
 
-                # Top 20 genes by padj
-                top_genes = de_result.results_df.nsmallest(20, "padj")[
-                    ["gene", "log2FoldChange", "padj"]
-                ].values.tolist()
+                    # Top 20 genes by padj
+                    top_genes = de_result.results_df.nsmallest(20, "padj")[
+                        ["gene", "log2FoldChange", "padj"]
+                    ].values.tolist()
 
-                table_data = [["Gene", "log2FC", "padj"]] + [
-                    [str(g), f"{fc:.2f}", f"{p:.2e}"] for g, fc, p in top_genes
-                ]
-                story.append(Table(table_data))
-                story.append(Spacer(1, 24))
+                    table_data = [["Gene", "log2FC", "padj"]] + [
+                        [str(g), f"{fc:.2f}", f"{p:.2e}"] for g, fc, p in top_genes
+                    ]
+                    story.append(Table(table_data))
+                    story.append(Spacer(1, 24))
 
         # 4. Volcano plot
         if (
@@ -452,50 +453,52 @@ class ExportEngine:
             story.append(Paragraph("Pathway Enrichment", styles["Heading1"]))
             story.append(Spacer(1, 6))
 
-            active = (
-                export_data.active_comparison
-                or list(export_data.enrichment_results.keys())[0]
+            active = export_data.active_comparison or next(
+                iter(export_data.enrichment_results.keys()), None
             )
-            enrich_result = export_data.enrichment_results[active]
+            if active is not None:
+                enrich_result = export_data.enrichment_results[active]
 
-            if (
-                enrich_result.error is None
-                and enrich_result.go_results is not None
-                and enrich_result.kegg_results is not None
-            ):
-                # GO results (top 10)
-                story.append(
-                    Paragraph("GO Biological Process (Top 10)", styles["Heading2"])
-                )
-                story.append(Spacer(1, 6))
-                go_top = enrich_result.go_results.head(10)[
-                    ["Term", "Adjusted P-value"]
-                ].values.tolist()
-                go_table = [["Term", "Adj. P-value"]] + [
-                    [term, f"{p:.2e}"] for term, p in go_top
-                ]
-                story.append(Table(go_table))
-                story.append(Spacer(1, 12))
-
-                # KEGG results (top 10)
-                story.append(Paragraph("KEGG Pathways (Top 10)", styles["Heading2"]))
-                story.append(Spacer(1, 6))
-                kegg_top = enrich_result.kegg_results.head(10)[
-                    ["Term", "Adjusted P-value"]
-                ].values.tolist()
-                kegg_table = [["Term", "Adj. P-value"]] + [
-                    [term, f"{p:.2e}"] for term, p in kegg_top
-                ]
-                story.append(Table(kegg_table))
-                story.append(Spacer(1, 24))
-            else:
-                story.append(
-                    Paragraph(
-                        f"Enrichment analysis failed: {enrich_result.error}",
-                        styles["Normal"],
+                if (
+                    enrich_result.error is None
+                    and enrich_result.go_results is not None
+                    and enrich_result.kegg_results is not None
+                ):
+                    # GO results (top 10)
+                    story.append(
+                        Paragraph("GO Biological Process (Top 10)", styles["Heading2"])
                     )
-                )
-                story.append(Spacer(1, 24))
+                    story.append(Spacer(1, 6))
+                    go_top = enrich_result.go_results.head(10)[
+                        ["Term", "Adjusted P-value"]
+                    ].values.tolist()
+                    go_table = [["Term", "Adj. P-value"]] + [
+                        [term, f"{p:.2e}"] for term, p in go_top
+                    ]
+                    story.append(Table(go_table))
+                    story.append(Spacer(1, 12))
+
+                    # KEGG results (top 10)
+                    story.append(
+                        Paragraph("KEGG Pathways (Top 10)", styles["Heading2"])
+                    )
+                    story.append(Spacer(1, 6))
+                    kegg_top = enrich_result.kegg_results.head(10)[
+                        ["Term", "Adjusted P-value"]
+                    ].values.tolist()
+                    kegg_table = [["Term", "Adj. P-value"]] + [
+                        [term, f"{p:.2e}"] for term, p in kegg_top
+                    ]
+                    story.append(Table(kegg_table))
+                    story.append(Spacer(1, 24))
+                else:
+                    story.append(
+                        Paragraph(
+                            f"Enrichment analysis failed: {enrich_result.error}",
+                            styles["Normal"],
+                        )
+                    )
+                    story.append(Spacer(1, 24))
 
         # 6. Gene panels
         panel_figs = {
