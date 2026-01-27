@@ -286,11 +286,11 @@ def mock_de_result_fixture(monkeypatch):
 
         return {"dds": mock_dds, "ds": mock_ds}
     except ImportError:
-        # If PyDESeq2 not installed, return None
+        import warnings
+        warnings.warn("PyDESeq2 not available. Some tests will be skipped.", UserWarning)
         return None
 
 
-# ============================================================================
 # Evidence Directory Fixture
 # ============================================================================
 
