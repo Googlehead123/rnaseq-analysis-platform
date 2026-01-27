@@ -289,6 +289,34 @@ class TestDetectSampleColumns:
         assert result.sample_to_condition["231222_none_3d_Read_Count"] == "none"
         assert result.sample_to_condition["240203_Bt10U_3d_FPKM"] == "Bt10U"
 
+    def test_detect_sample_columns_with_various_conditions(self):
+        """Test detection of sample columns with various condition names."""
+        df = pd.DataFrame(
+            {
+                "231222_none_3d_Read_Count": [100, 200, 300],
+                "231222_Bt10U_3d_FPKM": [10.5, 20.3, 30.1],
+                "240203_SwX15_5d_TPM": [5.2, 8.9, 12.4],
+                "240726_my45_7d_Read_Count": [150, 250, 350],
+            },
+            index=pd.Index(["Gene1", "Gene2", "Gene3"]),
+        )
+
+        result = detect_sample_columns(df)
+
+        assert isinstance(result, SampleColumnInfo)
+        assert "none" in result.conditions_detected
+        assert "Bt10U" in result.conditions_detected
+        assert "SwX15" in result.conditions_detected
+        assert "my45" in result.conditions_detected
+        assert "3d" not in result.conditions_detected
+        assert "5d" not in result.conditions_detected
+        assert "7d" not in result.conditions_detected
+
+        assert result.sample_to_condition["231222_none_3d_Read_Count"] == "none"
+        assert result.sample_to_condition["231222_Bt10U_3d_FPKM"] == "Bt10U"
+        assert result.sample_to_condition["240203_SwX15_5d_TPM"] == "SwX15"
+        assert result.sample_to_condition["240726_my45_7d_Read_Count"] == "my45"
+
 
 class TestParseMultiFormatExcel:
     """Integration tests for multi-format Excel parsing."""
