@@ -471,7 +471,12 @@ with st.sidebar:
                 elif result.data_type == DataType.NORMALIZED:
                     import numpy as np
 
-                    norm_counts = np.log2(result.expression_df + 1)
+                    if result.expression_df is None:
+                        st.info(
+                            "Heatmap and PCA visualizations unavailable: file contains only pre-analyzed DE results (no expression data)"
+                        )
+                    else:
+                        norm_counts = np.log2(result.expression_df + 1)
 
                 if norm_counts is not None:
                     # Prepare sample conditions map
