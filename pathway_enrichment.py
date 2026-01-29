@@ -58,6 +58,9 @@ class PathwayEnrichment:
         # Ensure gene column is properly named (handles various naming conventions)
         de_results = ensure_gene_column(de_results)
 
+        # Drop NaN values before filtering (normal for low-count genes)
+        de_results = de_results.dropna(subset=["padj", "log2FoldChange"])
+
         # Filter by padj and |log2FoldChange|
         sig = de_results[
             (de_results["padj"] < padj_threshold)

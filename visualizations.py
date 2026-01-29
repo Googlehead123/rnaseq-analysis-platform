@@ -60,11 +60,14 @@ def create_volcano_plot(
     # Add -log10(padj) column
     df = results_df.copy()
 
-    if df["padj"].isna().any():
-        n_nan = df["padj"].isna().sum()
+    # Drop rows with NaN padj (normal for low-count genes filtered by PyDESeq2)
+    n_nan = df["padj"].isna().sum()
+    if n_nan > 0:
+        df = df.dropna(subset=["padj"])
+    if df.empty:
         raise ValueError(
-            f"Cannot create volcano plot: {n_nan} NaN values in padj column. "
-            f"Ensure differential expression analysis completed successfully."
+            "Cannot create volcano plot: all padj values are NaN. "
+            "Ensure differential expression analysis completed successfully."
         )
 
     df["-log10_padj"] = -np.log10(df["padj"].clip(lower=1e-300))  # Clip to avoid inf
@@ -368,10 +371,15 @@ def create_ma_plot(
         raise ValueError(f"Cannot create MA plot: missing columns {missing}.")
 
     df = results_df.copy()
+    # Drop rows with NaN padj or log2FoldChange (normal for filtered genes)
+    df = df.dropna(subset=["padj", "log2FoldChange", "baseMean"])
+    if df.empty:
+        raise ValueError("Cannot create MA plot: no valid data after removing NaN values.")
+
     df["log10_baseMean"] = np.log10(df["baseMean"] + 1)
 
     def classify(row):
-        if row["padj"] >= padj_threshold:
+        if pd.isna(row["padj"]) or row["padj"] >= padj_threshold:
             return "NS"
         elif row["log2FoldChange"] > lfc_threshold:
             return "Up"
@@ -482,7 +490,7 @@ def compute_de_summary(
         raise ValueError("Cannot compute DE summary: results_df is empty or None.")
 
     results_df = ensure_gene_column(results_df)
-    df = results_df.copy()
+    df = results_df.dropna(subset=["padj", "log2FoldChange"]).copy()
 
     sig = df[df["padj"] < padj_threshold]
     up = sig[sig["log2FoldChange"] > lfc_threshold]
