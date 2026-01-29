@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from typing import Dict, List, Tuple, Optional
 import io
 import os
+import tempfile
 
 # Import backend modules
 from rnaseq_parser import RNASeqParser, DataType, ParseResult, ParserValidationError
@@ -18,9 +19,20 @@ from visualizations import (
     create_volcano_plot,
     create_clustered_heatmap,
     create_pca_plot,
+    create_ma_plot,
+    create_correlation_heatmap,
+    compute_de_summary
 )
 from gene_panels import GenePanelAnalyzer
 from export_engine import ExportEngine, ExportData, EnrichmentResult
+from demo_data import load_demo_dataset, get_demo_description
+from gene_search import search_genes, get_gene_summary
+from qc_plots import (
+    create_library_size_barplot,
+    create_count_distribution_boxplot,
+    create_gene_detection_plot,
+    create_sample_similarity_heatmap
+)
 
 # --- Page Config ---
 st.set_page_config(
@@ -51,12 +63,14 @@ if "active_comparison" not in st.session_state:
     st.session_state["active_comparison"] = None
 if "analysis_complete" not in st.session_state:
     st.session_state["analysis_complete"] = False
-
-# --- Constants ---
-ALLOWED_GROUPS = ["control", "positive_control", "treatment"]
+if "current_step" not in st.session_state:
+    st.session_state["current_step"] = 1
 
 # --- Helper Functions ---
 
+def set_step(step: int):
+    st.session_state["current_step"] = step
+    st.rerun()
 
 def get_unique_conditions(sample_metadata: Dict[str, Dict]) -> List[str]:
     """Get list of unique conditions from metadata."""
@@ -65,7 +79,6 @@ def get_unique_conditions(sample_metadata: Dict[str, Dict]) -> List[str]:
     conditions = set(m["condition"] for m in sample_metadata.values())
     return sorted(list(conditions))
 
-
 def count_samples_per_condition(sample_metadata: Dict[str, Dict]) -> Dict[str, int]:
     """Count how many samples are assigned to each condition."""
     counts = {}
@@ -73,7 +86,6 @@ def count_samples_per_condition(sample_metadata: Dict[str, Dict]) -> Dict[str, i
         condition = meta["condition"]
         counts[condition] = counts.get(condition, 0) + 1
     return counts
-
 
 def validate_metadata_assignment(
     sample_metadata: Dict[str, Dict], counts_df: pd.DataFrame
@@ -111,7 +123,6 @@ def validate_metadata_assignment(
 
     return len(errors) == 0, errors
 
-
 def validate_comparison(
     comp: Tuple[str, str], available_conditions: List[str]
 ) -> Tuple[bool, str]:
@@ -123,36 +134,81 @@ def validate_comparison(
         return False, "Selected conditions are not valid."
     return True, ""
 
-
 def add_comparison(test: str, ref: str):
     """Add a comparison to session state."""
     comp = (test, ref)
     if comp not in st.session_state["comparisons"]:
         st.session_state["comparisons"].append(comp)
 
-
 def remove_comparison(comp: Tuple[str, str]):
     """Remove a comparison from session state."""
     if comp in st.session_state["comparisons"]:
         st.session_state["comparisons"].remove(comp)
 
-
-# --- Main App Layout ---
-
-st.title("🧬 RNA-seq Analysis Platform")
-st.markdown("---")
-
-# Sidebar - Setup
+# --- Sidebar ---
 with st.sidebar:
-    st.header("1. Data Upload")
-    uploaded_file = st.file_uploader(
-        "Upload Counts File (CSV/TSV/Excel)", type=["csv", "tsv", "txt", "xlsx"]
-    )
+    st.title("🧬 RNA-seq Analysis")
+    st.markdown("---")
+    
+    # Step indicator
+    current_step = st.session_state["current_step"]
+    steps = ["📤 Upload", "🏷️ Metadata", "🔬 Compare", "📊 Results"]
+    for i, step_name in enumerate(steps, 1):
+        if i < current_step:
+            st.markdown(f"✅ {step_name}")
+        elif i == current_step:
+            st.markdown(f"🔵 **{step_name}**")
+        else:
+            st.markdown(f"⚪ {step_name}")
+    
+    st.markdown("---")
+    # Global settings only
+    st.subheader("Settings")
+    padj_threshold = st.slider("P-adj threshold", 0.001, 0.1, 0.05, key="padj_thresh")
+    lfc_threshold = st.slider("Log2FC threshold", 0.5, 3.0, 1.0, key="lfc_thresh")
 
+# --- Main Area ---
+
+# STEP 1: Upload & Preview
+if current_step == 1:
+    st.header("Step 1: Upload Data")
+    st.markdown("Upload your RNA-seq count matrix or load demo data to explore the platform.")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        uploaded_file = st.file_uploader("Upload Counts File (CSV/TSV/Excel)", type=["csv", "tsv", "txt", "xlsx"])
+    with col2:
+        st.markdown("**Or try the demo:**")
+        if st.button("🧪 Load Demo Data", use_container_width=True):
+            counts_df, metadata_df = load_demo_dataset()
+            # Create a ParseResult-like object for compatibility
+            demo_result = ParseResult(
+                expression_df=counts_df,
+                normalized_df=None,
+                de_results_df=None,
+                data_type=DataType.RAW_COUNTS,
+                can_run_de=True,
+                warnings=["Demo dataset loaded"],
+                dropped_columns=[],
+                gene_column_source="demo",
+                needs_user_input=False,
+                gene_column_candidates=[],
+                data_types_detected=[DataType.RAW_COUNTS]
+            )
+            st.session_state["parsed_result"] = demo_result
+            st.session_state["expression_matrix"] = counts_df
+            st.session_state["sample_metadata"] = {}
+            # Pre-populate metadata from demo
+            for sample in counts_df.index:
+                cond = metadata_df.loc[sample, "condition"]
+                st.session_state["sample_metadata"][sample] = {"condition": cond}
+            st.session_state["conditions"] = list(metadata_df["condition"].unique())
+            st.session_state["comparisons"] = []
+            st.session_state["analysis_complete"] = False
+            st.rerun()
+
+    # Handle file upload
     if uploaded_file:
-        # Save uploaded file to temp file for parser
-        import tempfile
-
         tmp_path = None
         try:
             suffix = f".{uploaded_file.name.split('.')[-1]}"
@@ -171,13 +227,9 @@ with st.sidebar:
             elif hasattr(st.session_state["parsed_result"], "expression_df"):
                 old_df = st.session_state["parsed_result"].expression_df
                 new_df = result.expression_df
-                # Handle None cases safely
                 if old_df is None and new_df is None:
-                    is_new_file = False  # Both None (e.g. pre-analyzed)
-                    # Check if de_results_df changed for pre-analyzed
-                    old_de = getattr(
-                        st.session_state["parsed_result"], "de_results_df", None
-                    )
+                    is_new_file = False
+                    old_de = getattr(st.session_state["parsed_result"], "de_results_df", None)
                     new_de = result.de_results_df
                     if old_de is not None and new_de is not None:
                         is_new_file = not new_de.equals(old_de)
@@ -189,333 +241,203 @@ with st.sidebar:
             if is_new_file:
                 st.session_state["parsed_result"] = result
                 st.session_state["expression_matrix"] = result.expression_df
-                st.session_state["analysis_complete"] = False  # Reset analysis
-                st.session_state["sample_metadata"] = {}  # Reset metadata
-                st.session_state["comparisons"] = []  # Reset comparisons
-
+                st.session_state["analysis_complete"] = False
+                st.session_state["sample_metadata"] = {}
+                st.session_state["comparisons"] = []
                 st.success(f"Loaded {result.data_type.value} data successfully!")
+                
+                # Auto-detect metadata logic (copied from original)
+                if hasattr(result, "data_types_detected") and len(result.data_types_detected) > 1 and result.expression_df is not None:
+                    sample_names = result.expression_df.index.tolist()
+                    detected_metadata = {}
+                    detected_conditions = set()
+                    import re
+                    for sample in sample_names:
+                        match = re.match(r"^.+?_(.+?)_", sample)
+                        if match:
+                            condition = match.group(1)
+                            detected_metadata[sample] = {"condition": condition}
+                            detected_conditions.add(condition)
+                    if detected_metadata:
+                        st.session_state["sample_metadata"] = detected_metadata
+                        st.session_state["conditions"] = sorted(list(detected_conditions))
+                        st.success(f"✓ Auto-detected conditions: {', '.join(sorted(detected_conditions))}")
 
-                # Show detected data types for multi-format files
-                if (
-                    hasattr(result, "data_types_detected")
-                    and result.data_types_detected
-                ):
-                    if len(result.data_types_detected) > 1:
-                        st.success(
-                            f"✓ Multi-format file detected: {', '.join([dt.value for dt in result.data_types_detected])}"
-                        )
-
-                        with st.expander("📊 Data Extraction Details", expanded=True):
-                            st.write("**Detected Data Types:**")
-                            for dtype in result.data_types_detected:
-                                st.write(f"✓ {dtype.value}")
-
-                            if result.de_results_df is not None:
-                                st.write(
-                                    f"\n**DE Results:** {len(result.de_results_df)} genes"
-                                )
-                                # Show column mapping
-                                st.write("**Column Mapping:**")
-                                col_mapping = {}
-                                for col in result.de_results_df.columns:
-                                    if "fold" in col.lower() or "fc" in col.lower():
-                                        col_mapping["log2FoldChange"] = col
-                                    elif "padj" in col.lower() or "adj" in col.lower():
-                                        col_mapping["padj"] = col
-                                    elif (
-                                        "pval" in col.lower() or "pvalue" in col.lower()
-                                    ):
-                                        col_mapping["pvalue"] = col
-
-                                if col_mapping:
-                                    for mapped, original in col_mapping.items():
-                                        st.code(f"{original} → {mapped}")
-                                else:
-                                    st.code(
-                                        "Columns: "
-                                        + ", ".join(result.de_results_df.columns[:5])
-                                    )
-
-                            if result.expression_df is not None:
-                                st.write(
-                                    f"\n**Expression Matrix:** {result.expression_df.shape[0]} samples × {result.expression_df.shape[1]} genes"
-                                )
-
-                            if result.normalized_df is not None:
-                                st.write(
-                                    f"\n**Normalized Values:** {result.normalized_df.shape[0]} samples (TPM/FPKM)"
-                                )
-
-                if result.warnings:
-                    for w in result.warnings:
-                        st.warning(w)
-
-        except ParserValidationError as e:
-            st.error(f"Error parsing file: {e.message}")
-            if e.details:
-                st.json(e.details)
         except Exception as e:
-            st.error(f"Unexpected error: {str(e)}")
+            st.error(f"Error parsing file: {str(e)}")
         finally:
-            # Clean up temp file on both success and error paths
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
-    # Only show setup if data is loaded
+    # If data loaded, show preview
     if st.session_state["parsed_result"]:
         result = st.session_state["parsed_result"]
+        # Data summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Samples", result.expression_df.shape[0] if result.expression_df is not None else "N/A")
+        with col2:
+            st.metric("Genes", result.expression_df.shape[1] if result.expression_df is not None else "N/A")
+        with col3:
+            st.metric("Data Type", result.data_type.value)
+        
+        # Data preview
+        with st.expander("📋 Data Preview", expanded=True):
+            st.dataframe(result.expression_df.head(10) if result.expression_df is not None else result.de_results_df.head(10))
+        
+        # QC plots
+        if result.expression_df is not None:
+            st.subheader("Quality Control")
+            qc_col1, qc_col2 = st.columns(2)
+            with qc_col1:
+                st.plotly_chart(create_library_size_barplot(result.expression_df), use_container_width=True)
+            with qc_col2:
+                st.plotly_chart(create_count_distribution_boxplot(result.expression_df), use_container_width=True)
+            
+            qc_col3, qc_col4 = st.columns(2)
+            with qc_col3:
+                st.plotly_chart(create_gene_detection_plot(result.expression_df), use_container_width=True)
+            with qc_col4:
+                st.plotly_chart(create_sample_similarity_heatmap(result.expression_df), use_container_width=True)
+        
+        # Next button
+        st.button("Next →", on_click=lambda: set_step(2), type="primary")
 
-        # Data Preview
-        with st.expander("Data Preview"):
-            if result.expression_df is not None:
-                st.dataframe(result.expression_df.head())
-                st.caption(
-                    f"Shape: {result.expression_df.shape[0]} samples × {result.expression_df.shape[1]} genes"
-                )
-            elif result.de_results_df is not None:
-                st.dataframe(result.de_results_df.head())
-
-        # Auto-detect metadata for multiformat files
-        if (
-            hasattr(result, "data_types_detected")
-            and len(result.data_types_detected) > 1
-            and result.expression_df is not None
-            and not st.session_state["sample_metadata"]
-        ):
-            # Auto-detect conditions from column names (samples are row indices)
-            sample_names = result.expression_df.index.tolist()
-            detected_metadata = {}
-            detected_conditions = set()
-
-            # Parse sample names: {date}_{condition}_{timepoint}_Read_Count or similar
-            import re
-
-            for sample in sample_names:
-                # Try to extract condition from sample name pattern
-                # Pattern: something_CONDITION_something_Read_Count
-                # But sample names in expression_df might be just the full column name
-                # Let's try to match the pattern used in parser
-                match = re.match(r"^.+?_(.+?)_", sample)
-                if match:
-                    condition = match.group(1)
-                    detected_metadata[sample] = {"condition": condition}
-                    detected_conditions.add(condition)
-
-            if detected_metadata:
-                st.session_state["sample_metadata"] = detected_metadata
-                st.session_state["conditions"] = sorted(list(detected_conditions))
-                st.success(
-                    f"✓ Auto-detected conditions from file: {', '.join(sorted(detected_conditions))}"
-                )
-                st.info(
-                    f"Found {len(sample_names)} samples across {len(detected_conditions)} conditions"
-                )
-
-        # Metadata Assignment (Only for files that can run DE)
-        if result.can_run_de:
-            st.header("2. Metadata")
-
-            # Condition management
-            new_condition = st.text_input("Add Condition Group")
-            if st.button("Add Group") and new_condition:
+# STEP 2: Metadata
+elif current_step == 2:
+    st.header("Step 2: Assign Sample Metadata")
+    
+    result = st.session_state["parsed_result"]
+    if not result or result.expression_df is None:
+        st.warning("No expression data loaded. Please go back to Step 1.")
+        st.button("← Back", on_click=lambda: set_step(1))
+    else:
+        # Show condition management
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            new_condition = st.text_input("Add new condition group", placeholder="e.g., Treatment, Control")
+        with col2:
+            st.markdown("")  # spacing
+            if st.button("Add Condition") and new_condition:
                 if new_condition not in st.session_state["conditions"]:
                     st.session_state["conditions"].append(new_condition)
+        
+        # Show available conditions as chips/tags
+        if st.session_state["conditions"]:
+            st.info(f"Available conditions: {', '.join(st.session_state['conditions'])}")
+        
+        # USE st.data_editor
+        samples = result.expression_df.index.tolist()
+        available_conditions = st.session_state["conditions"]
+        
+        if available_conditions:
+            # Build data for editor
+            editor_data = []
+            for s in samples:
+                current_cond = st.session_state["sample_metadata"].get(s, {}).get("condition", available_conditions[0])
+                editor_data.append({"Sample": s, "Condition": current_cond})
+            
+            edited_df = st.data_editor(
+                pd.DataFrame(editor_data),
+                column_config={
+                    "Sample": st.column_config.TextColumn("Sample Name", disabled=True),
+                    "Condition": st.column_config.SelectboxColumn("Condition", options=available_conditions, required=True),
+                },
+                use_container_width=True,
+                num_rows="fixed",
+                hide_index=True,
+            )
+            
+            # Update session state from editor
+            for _, row in edited_df.iterrows():
+                st.session_state["sample_metadata"][row["Sample"]] = {"condition": row["Condition"]}
+        
+        # Validation summary
+        is_valid, errors = validate_metadata_assignment(st.session_state["sample_metadata"], result.expression_df)
+        
+        if not is_valid:
+            for err in errors:
+                st.error(err)
+        else:
+            st.success("Metadata valid! Ready to proceed.")
+        
+        # Navigation
+        col1, col2 = st.columns(2)
+        with col1:
+            st.button("← Back", on_click=lambda: set_step(1))
+        with col2:
+            st.button("Next →", on_click=lambda: set_step(3), type="primary", disabled=not is_valid)
 
-            available_conditions = st.session_state["conditions"]
-
-            # Sample assignment
-            st.subheader("Assign Samples")
-            samples = result.expression_df.index.tolist()
-
-            # Initialize metadata if empty
-            if not st.session_state["sample_metadata"]:
-                for s in samples:
-                    st.session_state["sample_metadata"][s] = {
-                        "condition": available_conditions[0]
-                    }
-
-            # Bulk assignment helper
-            col1, col2 = st.columns(2)
+# STEP 3: Comparison & Analysis
+elif current_step == 3:
+    st.header("Step 3: Select Comparisons & Run Analysis")
+    
+    unique_conds = get_unique_conditions(st.session_state["sample_metadata"])
+    
+    st.subheader("Add Comparison")
+    col1, col2, col3 = st.columns([2, 2, 1])
+    with col1:
+        test_cond = st.selectbox("🧪 Test Condition", unique_conds)
+    with col2:
+        ref_cond = st.selectbox("📋 Reference Condition", unique_conds)
+    with col3:
+        st.markdown("")  # spacing
+        if st.button("➕ Add", use_container_width=True):
+            valid, msg = validate_comparison((test_cond, ref_cond), unique_conds)
+            if valid:
+                add_comparison(test_cond, ref_cond)
+            else:
+                st.error(msg)
+    
+    # Show active comparisons as cards
+    if st.session_state["comparisons"]:
+        st.subheader("Active Comparisons")
+        for i, (t, r) in enumerate(st.session_state["comparisons"]):
+            col1, col2 = st.columns([5, 1])
             with col1:
-                start_idx = st.number_input(
-                    "Start Index", min_value=1, max_value=len(samples), value=1
-                )
+                st.markdown(f"**{t}** vs **{r}**")
             with col2:
-                end_idx = st.number_input(
-                    "End Index",
-                    min_value=1,
-                    max_value=len(samples),
-                    value=min(len(samples), 5),
-                )
-
-            assign_cond = st.selectbox("Assign Range To", available_conditions)
-            if st.button("Assign Range"):
-                for i in range(start_idx - 1, end_idx):
-                    st.session_state["sample_metadata"][samples[i]]["condition"] = (
-                        assign_cond
-                    )
-                st.rerun()
-
-            # Individual assignment
-            with st.expander("Individual Sample Assignment"):
-                for sample in samples:
-                    current_cond = (
-                        st.session_state["sample_metadata"]
-                        .get(sample, {})
-                        .get("condition", available_conditions[0])
-                    )
-                    new_cond = st.selectbox(
-                        f"Condition for {sample}",
-                        available_conditions,
-                        index=available_conditions.index(current_cond)
-                        if current_cond in available_conditions
-                        else 0,
-                        key=f"sel_{sample}",
-                    )
-                    st.session_state["sample_metadata"][sample] = {
-                        "condition": new_cond
-                    }
-
-            # Validation
-            is_valid, errors = validate_metadata_assignment(
-                st.session_state["sample_metadata"], result.expression_df
-            )
-
-            if not is_valid:
-                for err in errors:
-                    st.error(err)
-            else:
-                st.success("Metadata valid!")
-
-            # Comparisons
-            st.header("3. Comparisons")
-            unique_conds = get_unique_conditions(st.session_state["sample_metadata"])
-
-            c1, c2 = st.columns(2)
-            with c1:
-                test_cond = st.selectbox(
-                    "Test Condition", unique_conds, key="test_cond"
-                )
-            with c2:
-                ref_cond = st.selectbox(
-                    "Reference Condition", unique_conds, key="ref_cond"
-                )
-
-            if st.button("Add Comparison"):
-                valid, msg = validate_comparison((test_cond, ref_cond), unique_conds)
-                if valid:
-                    add_comparison(test_cond, ref_cond)
-                else:
-                    st.error(msg)
-
-            # List comparisons
-            if st.session_state["comparisons"]:
-                st.write("Active Comparisons:")
-                for i, (t, r) in enumerate(st.session_state["comparisons"]):
-                    col_a, col_b = st.columns([4, 1])
-                    with col_a:
-                        st.write(f"**{t}** vs **{r}**")
-                    with col_b:
-                        if st.button("🗑️", key=f"del_{i}"):
-                            remove_comparison((t, r))
-                            st.rerun()
-            else:
-                st.warning("Please add at least one comparison.")
-
-        # Analysis Runner
-        st.header("4. Analysis")
-
-        can_run = False
-        # Initialize is_valid to False by default
-        is_valid = False
-
-        if result.can_run_de:
-            is_valid, _ = validate_metadata_assignment(
-                st.session_state["sample_metadata"], result.expression_df
-            )
-            can_run = is_valid and len(st.session_state["comparisons"]) > 0
-        elif result.data_type == DataType.PRE_ANALYZED:
-            can_run = True
-        elif result.data_type == DataType.NORMALIZED:
-            can_run = True  # Can run viz only
-
-        if st.button("Run Analysis", disabled=not can_run):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
+                if st.button("🗑️", key=f"del_{i}"):
+                    remove_comparison((t, r))
+                    st.rerun()
+    else:
+        st.warning("Please add at least one comparison.")
+    
+    st.markdown("---")
+    
+    # RUN ANALYSIS
+    can_run = len(st.session_state["comparisons"]) > 0
+    
+    if st.button("🚀 Run Analysis", type="primary", use_container_width=True, disabled=not can_run):
+        with st.status("Running analysis...", expanded=True) as status:
             try:
+                result = st.session_state["parsed_result"]
+                
                 # 1. DE Analysis
-                status_text.text("Running Differential Expression Analysis...")
-                progress_bar.progress(20)
-
+                st.write("Running Differential Expression Analysis...")
                 de_engine = DEAnalysisEngine()
-
-                if result.can_run_de:
-                    meta_df = pd.DataFrame.from_dict(
-                        st.session_state["sample_metadata"], orient="index"
-                    )
-
-                    de_results = de_engine.run_all_comparisons(
-                        counts_df=result.expression_df,
-                        metadata_df=meta_df,
-                        comparisons=st.session_state["comparisons"],
-                        design_factor="condition",
-                    )
-                    st.session_state["de_results"] = de_results
-
-                    # Set active comparison to first one
-                    if st.session_state["comparisons"]:
-                        st.session_state["active_comparison"] = st.session_state[
-                            "comparisons"
-                        ][0]
-
-                elif result.data_type == DataType.PRE_ANALYZED:
-                    # Wrap pre-analyzed result in DEResult
-                    # Note: Pre-analyzed doesn't have normalized counts usually, unless provided separately
-                    # For now, we just store the results_df
-                    dummy_comp = ("Uploaded", "File")
-                    st.session_state["de_results"] = {
-                        dummy_comp: DEResult(
-                            results_df=result.de_results_df,
-                            normalized_counts=result.normalized_df,  # Use if available
-                            log_normalized_counts=None,
-                            dds=None,
-                            comparison=dummy_comp,
-                            n_significant=len(
-                                result.de_results_df[
-                                    result.de_results_df["padj"] < 0.05
-                                ]
-                            )
-                            if "padj" in result.de_results_df.columns
-                            else 0,
-                            warnings=[],
-                        )
-                    }
-                    st.session_state["active_comparison"] = dummy_comp
-                    st.session_state["comparisons"] = [dummy_comp]
-
-                    # If multiformat, we also have expression data for heatmaps
-                    if result.normalized_df is not None:
-                        st.info(
-                            "✓ File contains both DE results and expression data - full visualizations available"
-                        )
-
-                elif result.data_type == DataType.NORMALIZED:
-                    # No DE, just viz
-                    st.session_state["de_results"] = {}
-                    st.session_state["active_comparison"] = None
-
+                
+                meta_df = pd.DataFrame.from_dict(st.session_state["sample_metadata"], orient="index")
+                
+                de_results = de_engine.run_all_comparisons(
+                    counts_df=result.expression_df,
+                    metadata_df=meta_df,
+                    comparisons=st.session_state["comparisons"],
+                    design_factor="condition",
+                )
+                st.session_state["de_results"] = de_results
+                
+                if st.session_state["comparisons"]:
+                    st.session_state["active_comparison"] = st.session_state["comparisons"][0]
+                
                 # 2. Pathway Enrichment
-                status_text.text("Running Pathway Enrichment...")
-                progress_bar.progress(50)
-
+                st.write("Running Pathway Enrichment...")
                 pe = PathwayEnrichment()
                 enrichment_results = {}
-
+                
                 for comp, de_res in st.session_state["de_results"].items():
                     if de_res.results_df is not None and not de_res.results_df.empty:
                         genes, error = pe.select_genes_for_enrichment(de_res.results_df)
-
                         res_obj = EnrichmentResult(
                             go_results=pd.DataFrame(),
                             kegg_results=pd.DataFrame(),
@@ -523,320 +445,223 @@ with st.sidebar:
                             selection_note=f"{len(genes)} genes selected",
                             error=error,
                         )
-
                         if not error:
                             go_res, go_err = pe.get_go_enrichment(genes)
                             kegg_res, kegg_err = pe.get_kegg_enrichment(genes)
-
                             res_obj.go_results = go_res
                             res_obj.kegg_results = kegg_res
                             if go_err or kegg_err:
                                 res_obj.error = f"GO: {go_err}, KEGG: {kegg_err}"
-
                         enrichment_results[comp] = res_obj
-
                 st.session_state["enrichment_results"] = enrichment_results
-
+                
                 # 3. Visualizations
-                status_text.text("Generating Visualizations...")
-                progress_bar.progress(70)
-
+                st.write("Generating Visualizations...")
                 figures = {}
-
+                
                 # Volcano (per comparison)
                 for comp, de_res in st.session_state["de_results"].items():
                     if de_res.results_df is not None:
                         comp_name = f"{comp[0]}_vs_{comp[1]}"
-                        figures[f"volcano_{comp_name}"] = create_volcano_plot(
-                            de_res.results_df
-                        )
-
+                        figures[f"volcano_{comp_name}"] = create_volcano_plot(de_res.results_df)
+                        figures[f"ma_{comp_name}"] = create_ma_plot(de_res.results_df)
+                
                 # Heatmap & PCA (Global)
-                # Need normalized counts.
-                # For RAW_COUNTS, get from first DE result (all share same normalized counts)
-                # For NORMALIZED, use expression_df directly
-                norm_counts = None
-                if result.can_run_de and st.session_state["de_results"]:
+                if st.session_state["de_results"]:
                     first_res = next(iter(st.session_state["de_results"].values()))
                     norm_counts = first_res.log_normalized_counts
-                elif (
-                    result.data_type == DataType.NORMALIZED
-                    or result.normalized_df is not None
-                ):
-                    # Prefer normalized_df (TPM/FPKM) over raw expression_df
-                    source_df = (
-                        result.normalized_df
-                        if result.normalized_df is not None
-                        else result.expression_df
-                    )
-
-                    if source_df is not None:
-                        import numpy as np
-
-                        norm_counts = np.log2(source_df + 1)
-                    else:
-                        st.info(
-                            "Heatmap and PCA visualizations unavailable: file contains only pre-analyzed DE results (no expression data)"
-                        )
-
-                if norm_counts is not None:
-                    if result.can_run_de and st.session_state["sample_metadata"]:
-                        sample_conds = {
-                            s: m["condition"]
-                            for s, m in st.session_state["sample_metadata"].items()
-                        }
-                    else:
-                        # For normalized, assume all same condition or infer from columns?
-                        # Plan says "NORMALIZED input (floats) should disable DE analysis but enable viz."
-                        # We'll just use dummy conditions if not provided
-                        sample_conds = {s: "Sample" for s in norm_counts.index}
-
-                    # Heatmap: genes x samples (TRANSPOSE REQUIRED)
-                    figures["heatmap"] = create_clustered_heatmap(
-                        norm_counts.T, sample_conds
-                    )
-
-                    # PCA: samples x genes (NO TRANSPOSE)
-                    figures["pca"] = create_pca_plot(norm_counts, sample_conds)
-
-                    # 4. Gene Panels
-                    status_text.text("Analyzing Gene Panels...")
-                    progress_bar.progress(90)
-
-                    try:
-                        analyzer = GenePanelAnalyzer(
-                            config_path="config/gene_panels.yaml"
-                        )
-                        panels = analyzer.panels
-
-                        failed_panels = []
-                        for panel_name in panels:
-                            try:
-                                fig = analyzer.plot_panel(
-                                    norm_counts, panel_name, sample_conds
-                                )
-                                figures[f"panel_{panel_name}"] = fig
-                            except ValueError as e:
-                                failed_panels.append((panel_name, str(e)))
-
-                        if failed_panels:
-                            panel_names = [p[0] for p in failed_panels]
-                            st.info(
-                                f"Gene panels unavailable: {', '.join(panel_names)}. Reason: insufficient genes in your data."
-                            )
-                    except FileNotFoundError:
-                        st.warning("Gene panels config not found.")
-
+                    
+                    if norm_counts is not None:
+                        sample_conds = {s: m["condition"] for s, m in st.session_state["sample_metadata"].items()}
+                        figures["heatmap"] = create_clustered_heatmap(norm_counts.T, sample_conds)
+                        figures["pca"] = create_pca_plot(norm_counts, sample_conds)
+                        figures["correlation"] = create_correlation_heatmap(norm_counts.T, sample_conds)
+                        
+                        # Gene Panels
+                        st.write("Analyzing Gene Panels...")
+                        try:
+                            analyzer = GenePanelAnalyzer(config_path="config/gene_panels.yaml")
+                            for panel_name in analyzer.panels:
+                                try:
+                                    fig = analyzer.plot_panel(norm_counts, panel_name, sample_conds)
+                                    figures[f"panel_{panel_name}"] = fig
+                                except ValueError:
+                                    pass
+                        except FileNotFoundError:
+                            pass
+                
                 st.session_state["figures"] = figures
                 st.session_state["analysis_complete"] = True
-
-                progress_bar.progress(100)
-                status_text.text("Analysis Complete!")
+                status.update(label="Analysis complete!", state="complete")
+                
+                st.session_state["current_step"] = 4
                 st.rerun()
-
+                
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
                 import traceback
-
                 st.code(traceback.format_exc())
 
-# Main Content - Results
-if st.session_state["analysis_complete"]:
-    # Comparison Selector (if multiple)
-    if len(st.session_state["comparisons"]) > 1:
-        comps = st.session_state["comparisons"]
-        comp_labels = [f"{t} vs {r}" for t, r in comps]
-        selected_idx = st.selectbox(
-            "Select Comparison to View",
-            range(len(comps)),
-            format_func=lambda x: comp_labels[x],
-        )
-        st.session_state["active_comparison"] = comps[selected_idx]
+    # Back button
+    st.button("← Back", on_click=lambda: set_step(2))
 
-    active_comp = st.session_state["active_comparison"]
-
-    # Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(
-        [
-            "Differential Expression",
-            "Pathway Enrichment",
-            "Visualizations",
-            "Gene Panels",
-        ]
-    )
-
-    with tab1:
-        st.subheader("Differential Expression Results")
-        if active_comp and active_comp in st.session_state["de_results"]:
-            res = st.session_state["de_results"][active_comp]
-            if res.results_df is not None:
-                st.dataframe(res.results_df.sort_values("padj").head(1000))
-
-                # Download CSV
-                csv = res.results_df.to_csv().encode("utf-8")
+# STEP 4: Results
+elif current_step == 4:
+    st.header("Step 4: Results")
+    
+    if not st.session_state["analysis_complete"]:
+        st.warning("Analysis not complete. Please go back to Step 3.")
+        st.button("← Back", on_click=lambda: set_step(3))
+    else:
+        # Comparison selector
+        if len(st.session_state["comparisons"]) > 1:
+            comps = st.session_state["comparisons"]
+            comp_labels = [f"{t} vs {r}" for t, r in comps]
+            selected_idx = st.selectbox(
+                "Select Comparison to View",
+                range(len(comps)),
+                format_func=lambda x: comp_labels[x],
+            )
+            st.session_state["active_comparison"] = comps[selected_idx]
+        
+        active_comp = st.session_state["active_comparison"]
+        res = st.session_state["de_results"].get(active_comp)
+        
+        if res:
+            # Results tabs
+            tab_summary, tab_de, tab_volcano, tab_ma, tab_heatmap, tab_pca, tab_enrichment, tab_panels, tab_export = st.tabs([
+                "📊 Summary", "📋 DE Results", "🌋 Volcano", "📈 MA Plot", 
+                "🗺️ Heatmap", "🔬 PCA", "🧬 Enrichment", "🎯 Gene Panels", "📥 Export"
+            ])
+            
+            with tab_summary:
+                if res.results_df is not None:
+                    summary = compute_de_summary(res.results_df)
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Total Genes", summary["total_genes"])
+                    col2.metric("Significant", summary["significant_genes"])
+                    col3.metric("Upregulated", summary["upregulated"], delta=f"↑")
+                    col4.metric("Downregulated", summary["downregulated"], delta=f"↓", delta_color="inverse")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.subheader("Top Upregulated Genes")
+                        st.dataframe(pd.DataFrame(summary["top_up_genes"], columns=["Gene", "Log2FC", "Padj"]))
+                    with col2:
+                        st.subheader("Top Downregulated Genes")
+                        st.dataframe(pd.DataFrame(summary["top_down_genes"], columns=["Gene", "Log2FC", "Padj"]))
+            
+            with tab_de:
+                search_query = st.text_input("🔍 Search genes...", placeholder="Type gene name (e.g., COL1A1)")
+                display_df = res.results_df
+                if search_query:
+                    display_df = search_genes(display_df, search_query)
+                
+                st.dataframe(display_df.sort_values("padj").head(1000))
+                
+                csv = display_df.to_csv().encode("utf-8")
                 st.download_button(
                     "Download DE Results (CSV)",
                     csv,
                     f"de_results_{active_comp[0]}_vs_{active_comp[1]}.csv",
                     "text/csv",
                 )
-            else:
-                st.warning("No results for this comparison.")
-        else:
-            st.info("No active comparison selected.")
-
-    with tab2:
-        st.subheader("Pathway Enrichment")
-        if active_comp and active_comp in st.session_state["enrichment_results"]:
-            enr = st.session_state["enrichment_results"][active_comp]
-
-            if enr.error:
-                st.warning(enr.error)
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("### GO Biological Process")
-                if not enr.go_results.empty:
-                    st.dataframe(enr.go_results)
+            
+            with tab_volcano:
+                comp_name = f"{active_comp[0]}_vs_{active_comp[1]}"
+                if f"volcano_{comp_name}" in st.session_state["figures"]:
+                    st.plotly_chart(st.session_state["figures"][f"volcano_{comp_name}"], use_container_width=True)
+            
+            with tab_ma:
+                comp_name = f"{active_comp[0]}_vs_{active_comp[1]}"
+                if f"ma_{comp_name}" in st.session_state["figures"]:
+                    st.plotly_chart(st.session_state["figures"][f"ma_{comp_name}"], use_container_width=True)
+            
+            with tab_heatmap:
+                if "heatmap" in st.session_state["figures"]:
+                    st.plotly_chart(st.session_state["figures"]["heatmap"], use_container_width=True)
+                if "correlation" in st.session_state["figures"]:
+                    st.plotly_chart(st.session_state["figures"]["correlation"], use_container_width=True)
+            
+            with tab_pca:
+                if "pca" in st.session_state["figures"]:
+                    st.plotly_chart(st.session_state["figures"]["pca"], use_container_width=True)
+            
+            with tab_enrichment:
+                if active_comp in st.session_state["enrichment_results"]:
+                    enr = st.session_state["enrichment_results"][active_comp]
+                    if enr.error:
+                        st.warning(enr.error)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("### GO Biological Process")
+                        if not enr.go_results.empty:
+                            st.dataframe(enr.go_results)
+                        else:
+                            st.info("No significant GO terms found.")
+                    with col2:
+                        st.write("### KEGG Pathways")
+                        if not enr.kegg_results.empty:
+                            st.dataframe(enr.kegg_results)
+                        else:
+                            st.info("No significant KEGG pathways found.")
+            
+            with tab_panels:
+                panel_keys = [k for k in st.session_state["figures"].keys() if k.startswith("panel_")]
+                if panel_keys:
+                    for key in panel_keys:
+                        st.plotly_chart(st.session_state["figures"][key], use_container_width=True)
                 else:
-                    st.info("No significant GO terms found.")
-
-            with col2:
-                st.write("### KEGG Pathways")
-                if not enr.kegg_results.empty:
-                    st.dataframe(enr.kegg_results)
-                else:
-                    st.info("No significant KEGG pathways found.")
-        else:
-            st.info("No enrichment results available.")
-
-    with tab3:
-        st.subheader("Visualizations")
-
-        # Volcano
-        if active_comp:
-            comp_name = f"{active_comp[0]}_vs_{active_comp[1]}"
-            volcano_key = f"volcano_{comp_name}"
-            if volcano_key in st.session_state["figures"]:
-                st.plotly_chart(
-                    st.session_state["figures"][volcano_key], use_container_width=True
+                    st.info("No gene panels available.")
+            
+            with tab_export:
+                st.header("Export Results")
+                col1, col2 = st.columns(2)
+                
+                sample_conds = {s: m["condition"] for s, m in st.session_state["sample_metadata"].items()}
+                export_data = ExportData(
+                    data_type=st.session_state["parsed_result"].data_type,
+                    de_results=st.session_state["de_results"],
+                    expression_matrix=st.session_state["expression_matrix"],
+                    enrichment_results=st.session_state["enrichment_results"],
+                    figures=st.session_state["figures"],
+                    settings={
+                        "padj_threshold": padj_threshold,
+                        "lfc_threshold": lfc_threshold,
+                        "comparisons": st.session_state["comparisons"],
+                    },
+                    sample_conditions=sample_conds,
+                    active_comparison=st.session_state["active_comparison"],
                 )
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if "heatmap" in st.session_state["figures"]:
-                st.plotly_chart(
-                    st.session_state["figures"]["heatmap"], use_container_width=True
-                )
-        with col2:
-            if "pca" in st.session_state["figures"]:
-                st.plotly_chart(
-                    st.session_state["figures"]["pca"], use_container_width=True
-                )
-
-    with tab4:
-        st.subheader("Gene Panels")
-        # Display all panel figures
-        panel_keys = [
-            k for k in st.session_state["figures"].keys() if k.startswith("panel_")
-        ]
-        if panel_keys:
-            for key in panel_keys:
-                st.plotly_chart(
-                    st.session_state["figures"][key], use_container_width=True
-                )
-        else:
-            st.info(
-                "No gene panels available (check if config exists and genes are present in data)."
-            )
-
-    # Export Section
-    st.markdown("---")
-    st.header("5. Export Results")
-
-    col1, col2 = st.columns(2)
-
-    # Prepare ExportData
-    # Need to reconstruct sample_conditions for export
-    sample_conds = {}
-    if st.session_state["sample_metadata"]:
-        sample_conds = {
-            s: m["condition"] for s, m in st.session_state["sample_metadata"].items()
-        }
-
-    export_data = ExportData(
-        data_type=st.session_state["parsed_result"].data_type,
-        de_results=st.session_state["de_results"],
-        expression_matrix=st.session_state[
-            "expression_matrix"
-        ],  # This is raw counts for RAW_COUNTS type
-        enrichment_results=st.session_state["enrichment_results"],
-        figures=st.session_state["figures"],
-        settings={
-            "padj_threshold": 0.05,
-            "lfc_threshold": 1.0,
-            "comparisons": st.session_state["comparisons"],
-        },
-        sample_conditions=sample_conds,
-        active_comparison=st.session_state["active_comparison"],
-    )
-
-    engine = ExportEngine()
-
-    with col1:
-        if st.button("Generate Excel Report"):
-            with st.spinner("Generating Excel..."):
-                buffer = io.BytesIO()
-                # We need to patch export_excel to accept a buffer or file-like object
-                # The current implementation takes a filepath.
-                # Let's use a temp file.
-                import tempfile
-
-                tmp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".xlsx"
-                    ) as tmp:
-                        engine.export_excel(tmp.name, export_data)
-                        tmp_path = tmp.name
-
-                    with open(tmp_path, "rb") as f:
-                        st.download_button(
-                            "Download Excel Report",
-                            f.read(),
-                            "rnaseq_results.xlsx",
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        )
-                finally:
-                    if tmp_path and os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-
-    with col2:
-        if st.button("Generate PDF Report"):
-            with st.spinner("Generating PDF..."):
-                import tempfile
-
-                tmp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".pdf"
-                    ) as tmp:
-                        engine.export_pdf_report(tmp.name, export_data)
-                        tmp_path = tmp.name
-
-                    with open(tmp_path, "rb") as f:
-                        st.download_button(
-                            "Download PDF Report",
-                            f.read(),
-                            "rnaseq_report.pdf",
-                            "application/pdf",
-                        )
-                finally:
-                    if tmp_path and os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-
-else:
-    if not st.session_state["parsed_result"]:
-        st.info("👋 Welcome! Please upload a counts file in the sidebar to begin.")
-    else:
-        st.info("Please configure metadata and comparisons, then click 'Run Analysis'.")
+                engine = ExportEngine()
+                
+                with col1:
+                    if st.button("Generate Excel Report"):
+                        with st.spinner("Generating Excel..."):
+                            tmp_path = None
+                            try:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                                    engine.export_excel(tmp.name, export_data)
+                                    tmp_path = tmp.name
+                                with open(tmp_path, "rb") as f:
+                                    st.download_button("Download Excel Report", f.read(), "rnaseq_results.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                            finally:
+                                if tmp_path and os.path.exists(tmp_path):
+                                    os.unlink(tmp_path)
+                
+                with col2:
+                    if st.button("Generate PDF Report"):
+                        with st.spinner("Generating PDF..."):
+                            tmp_path = None
+                            try:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                    engine.export_pdf_report(tmp.name, export_data)
+                                    tmp_path = tmp.name
+                                with open(tmp_path, "rb") as f:
+                                    st.download_button("Download PDF Report", f.read(), "rnaseq_report.pdf", "application/pdf")
+                            finally:
+                                if tmp_path and os.path.exists(tmp_path):
+                                    os.unlink(tmp_path)
+        
+        st.button("← Back to Comparisons", on_click=lambda: set_step(3))
