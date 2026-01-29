@@ -12,6 +12,8 @@ import plotly.express as px
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 from sklearn.decomposition import PCA
+from de_analysis import ensure_gene_column
+from de_analysis import ensure_gene_column
 
 
 def create_volcano_plot(
@@ -35,6 +37,9 @@ def create_volcano_plot(
             "Ensure your differential expression analysis produced results. "
             "Check that your input data has samples and genes."
         )
+
+    # Ensure gene column is properly named (defensive)
+    results_df = ensure_gene_column(results_df)
 
     required_cols = ["gene", "log2FoldChange", "padj"]
     missing = [col for col in required_cols if col not in results_df.columns]

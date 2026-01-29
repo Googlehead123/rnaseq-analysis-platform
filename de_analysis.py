@@ -15,6 +15,56 @@ from pydeseq2.ds import DeseqStats
 logger = logging.getLogger(__name__)
 
 
+def ensure_gene_column(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure DataFrame has a 'gene' column, handling various index/column naming conventions.
+
+    Handles cases where:
+    - Gene info is in a named index (e.g., index.name = "Gene")
+    - Gene column has different casing (e.g., "Gene", "GENE", "GeneSymbol")
+    - Gene column has different naming (e.g., "gene_id", "gene_symbol", "SYMBOL")
+
+    Args:
+        df: DataFrame that may have gene info in index or with non-standard column name
+
+    Returns:
+        DataFrame with a lowercase "gene" column containing gene identifiers
+    """
+    # If "gene" column already exists, return as-is
+    if "gene" in df.columns:
+        return df
+
+    # Check for common gene column name aliases (case-insensitive)
+    gene_aliases = [
+        "Gene", "GENE", "GeneSymbol", "gene_symbol", "gene_id", "SYMBOL",
+        "GeneName", "gene_name", "gene_name_id", "ensembl_gene_id"
+    ]
+    for alias in gene_aliases:
+        if alias in df.columns:
+            df = df.copy()
+            df.columns = ["gene" if col == alias else col for col in df.columns]
+            return df
+
+    # If gene info is in the index, move it to a column
+    if df.index.name and df.index.name.lower() in ["gene", "genesymbol", "gene_symbol", "symbol", "geneid", "gene_id"]:
+        df = df.copy()
+        df = df.reset_index()
+        # Rename the index column to "gene"
+        df.columns = ["gene"] + list(df.columns[1:])
+        return df
+
+    # If index has no name but appears to contain gene identifiers, move it to column
+    if df.index.name is None and len(df) > 0:
+        # Check if index looks like gene names (strings, not numeric)
+        if isinstance(df.index[0], str):
+            df = df.copy()
+            df = df.reset_index()
+            df.columns = ["gene"] + list(df.columns[1:])
+            return df
+
+    return df
+
+
 @dataclass
 class DEResult:
     """Result from differential expression analysis."""
@@ -125,7 +175,12 @@ class DEAnalysisEngine:
         stat_res.summary()
 
         # Extract results DataFrame
-        results_df = stat_res.results_df.reset_index().rename(columns={"index": "gene"})
+        results_df = stat_res.results_df.copy()
+        results_df.index.name = None  # Clear any named index
+        results_df = results_df.reset_index()
+        results_df.columns = ["gene"] + list(results_df.columns[1:])
+        # Ensure gene column is lowercase (defensive)
+        results_df = ensure_gene_column(results_df)
         # Columns: gene, baseMean, log2FoldChange, lfcSE, stat, pvalue, padj
 
         # Count significant genes

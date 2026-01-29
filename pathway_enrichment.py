@@ -13,6 +13,8 @@ Author: RNA-seq Analysis Platform
 import gseapy as gp
 import pandas as pd
 from typing import List, Tuple, Optional
+from de_analysis import ensure_gene_column
+from de_analysis import ensure_gene_column
 
 
 class PathwayEnrichment:
@@ -53,6 +55,9 @@ class PathwayEnrichment:
             - gene_list: List of gene symbols sorted by padj ascending
             - error_message: None if successful, error string if too few genes
         """
+        # Ensure gene column is properly named (handles various naming conventions)
+        de_results = ensure_gene_column(de_results)
+
         # Filter by padj and |log2FoldChange|
         sig = de_results[
             (de_results["padj"] < padj_threshold)
