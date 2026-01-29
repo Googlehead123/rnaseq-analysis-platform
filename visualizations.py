@@ -4,7 +4,7 @@ Interactive visualizations for RNA-seq analysis using Plotly.
 Provides volcano plots, clustered heatmaps, and PCA plots.
 """
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -13,11 +13,11 @@ from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 from sklearn.decomposition import PCA
 from de_analysis import ensure_gene_column
-from de_analysis import ensure_gene_column
 
 
 def create_volcano_plot(
-    results_df: pd.DataFrame, lfc_threshold: float = 1.0, padj_threshold: float = 0.05
+    results_df: pd.DataFrame, lfc_threshold: float = 1.0, padj_threshold: float = 0.05,
+    top_n_labels: int = 10,
 ) -> go.Figure:
     """
     Create interactive volcano plot from DE results.
@@ -102,6 +102,26 @@ def create_volcano_plot(
     fig.add_hline(y=-np.log10(padj_threshold), line_dash="dash", line_color="gray")
     fig.add_vline(x=lfc_threshold, line_dash="dash", line_color="gray")
     fig.add_vline(x=-lfc_threshold, line_dash="dash", line_color="gray")
+
+    # Add text annotations for top N significant genes
+    if top_n_labels > 0:
+        top_genes = (
+            df[df["padj"] < padj_threshold]
+            .nsmallest(top_n_labels, "padj")
+        )
+        if not top_genes.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=top_genes["log2FoldChange"],
+                    y=top_genes["-log10_padj"],
+                    mode="text",
+                    text=top_genes["gene"],
+                    textposition="top center",
+                    textfont=dict(size=9),
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
 
     fig.update_layout(title="Volcano Plot", showlegend=True)
 
@@ -226,7 +246,8 @@ def create_clustered_heatmap(
 
 
 def create_pca_plot(
-    expression_df: pd.DataFrame, sample_conditions: Dict[str, str]
+    expression_df: pd.DataFrame, sample_conditions: Dict[str, str],
+    show_ellipses: bool = True,
 ) -> go.Figure:
     """
     Create PCA plot for sample clustering visualization.
@@ -284,6 +305,211 @@ def create_pca_plot(
         },
     )
 
+    # Add 95% confidence ellipses per condition group
+    if show_ellipses:
+        colors = px.colors.qualitative.Plotly
+        conditions = sorted(pca_df["condition"].unique())
+        for i, cond in enumerate(conditions):
+            group = pca_df[pca_df["condition"] == cond]
+            if len(group) < 3:
+                continue
+            mean_x, mean_y = group["PC1"].mean(), group["PC2"].mean()
+            cov = np.cov(group["PC1"].values, group["PC2"].values)
+            eigenvalues, eigenvectors = np.linalg.eigh(cov)
+            # Sort descending
+            order = eigenvalues.argsort()[::-1]
+            eigenvalues = eigenvalues[order]
+            eigenvectors = eigenvectors[:, order]
+            # 95% confidence: chi2(df=2) = 5.991
+            scale = np.sqrt(5.991)
+            theta = np.linspace(0, 2 * np.pi, 100)
+            ellipse = np.array([np.cos(theta), np.sin(theta)])
+            # Transform
+            transform = eigenvectors @ np.diag(np.sqrt(np.maximum(eigenvalues, 0)) * scale)
+            ellipse_pts = (transform @ ellipse).T + np.array([mean_x, mean_y])
+            fig.add_trace(
+                go.Scatter(
+                    x=ellipse_pts[:, 0],
+                    y=ellipse_pts[:, 1],
+                    mode="lines",
+                    line=dict(color=colors[i % len(colors)], dash="dash", width=1.5),
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+
     fig.update_layout(title="PCA Plot", showlegend=True)
 
     return fig
+
+
+def create_ma_plot(
+    results_df: pd.DataFrame, padj_threshold: float = 0.05, lfc_threshold: float = 1.0
+) -> go.Figure:
+    """
+    Create MA plot (log mean expression vs log2 fold change).
+
+    Args:
+        results_df: DataFrame with columns: gene, log2FoldChange, padj, baseMean
+        padj_threshold: Adjusted p-value threshold (default: 0.05)
+        lfc_threshold: Log2 fold change threshold (default: 1.0)
+
+    Returns:
+        Plotly Figure object
+    """
+    if results_df is None or results_df.empty:
+        raise ValueError("Cannot create MA plot: results_df is empty or None.")
+
+    results_df = ensure_gene_column(results_df)
+
+    required_cols = ["gene", "log2FoldChange", "padj", "baseMean"]
+    missing = [c for c in required_cols if c not in results_df.columns]
+    if missing:
+        raise ValueError(f"Cannot create MA plot: missing columns {missing}.")
+
+    df = results_df.copy()
+    df["log10_baseMean"] = np.log10(df["baseMean"] + 1)
+
+    def classify(row):
+        if row["padj"] >= padj_threshold:
+            return "NS"
+        elif row["log2FoldChange"] > lfc_threshold:
+            return "Up"
+        elif row["log2FoldChange"] < -lfc_threshold:
+            return "Down"
+        else:
+            return "NS"
+
+    df["significance"] = df.apply(classify, axis=1)
+
+    fig = px.scatter(
+        df,
+        x="log10_baseMean",
+        y="log2FoldChange",
+        color="significance",
+        hover_name="gene",
+        hover_data={
+            "log2FoldChange": ":.2f",
+            "padj": ":.2e",
+            "log10_baseMean": False,
+            "significance": False,
+        },
+        color_discrete_map={"Up": "red", "Down": "blue", "NS": "lightgray"},
+        labels={
+            "log10_baseMean": "log₁₀(baseMean + 1)",
+            "log2FoldChange": "log₂(Fold Change)",
+        },
+    )
+
+    fig.add_hline(y=lfc_threshold, line_dash="dash", line_color="gray")
+    fig.add_hline(y=-lfc_threshold, line_dash="dash", line_color="gray")
+    fig.add_hline(y=0, line_color="black", line_width=0.5)
+
+    fig.update_layout(title="MA Plot", showlegend=True)
+
+    return fig
+
+
+def create_correlation_heatmap(
+    expression_df: pd.DataFrame, sample_conditions: dict,
+    method: str = "spearman",
+) -> go.Figure:
+    """
+    Create sample-to-sample correlation heatmap.
+
+    Args:
+        expression_df: samples × genes DataFrame
+        sample_conditions: Dict mapping sample names to conditions
+        method: Correlation method ('spearman' or 'pearson')
+
+    Returns:
+        Plotly Figure object
+    """
+    if expression_df is None or expression_df.empty:
+        raise ValueError("Cannot create correlation heatmap: expression_df is empty or None.")
+
+    # Compute sample-to-sample correlations
+    corr_matrix = expression_df.T.corr(method=method)
+
+    # Sort samples by condition
+    sorted_samples = sorted(
+        corr_matrix.columns,
+        key=lambda s: sample_conditions.get(s, ""),
+    )
+    corr_matrix = corr_matrix.loc[sorted_samples, sorted_samples]
+
+    # Format text annotations
+    text_vals = [[f"{v:.3f}" for v in row] for row in corr_matrix.values]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=corr_matrix.values,
+            x=corr_matrix.columns.tolist(),
+            y=corr_matrix.index.tolist(),
+            colorscale="RdBu_r",
+            zmid=0,
+            text=text_vals,
+            texttemplate="%{text}",
+            hovertemplate="Sample X: %{x}<br>Sample Y: %{y}<br>Correlation: %{z:.3f}<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title=f"Sample Correlation Heatmap ({method.capitalize()})",
+        width=600,
+        height=600,
+    )
+
+    return fig
+
+
+def compute_de_summary(
+    results_df: pd.DataFrame, padj_threshold: float = 0.05, lfc_threshold: float = 1.0
+) -> dict:
+    """
+    Compute summary statistics from DE results.
+
+    Args:
+        results_df: DataFrame with columns: gene, log2FoldChange, padj
+        padj_threshold: Adjusted p-value threshold (default: 0.05)
+        lfc_threshold: Log2 fold change threshold (default: 1.0)
+
+    Returns:
+        Dict with total_genes, significant_genes, upregulated, downregulated,
+        top_up_genes, top_down_genes, top_significant
+    """
+    if results_df is None or results_df.empty:
+        raise ValueError("Cannot compute DE summary: results_df is empty or None.")
+
+    results_df = ensure_gene_column(results_df)
+    df = results_df.copy()
+
+    sig = df[df["padj"] < padj_threshold]
+    up = sig[sig["log2FoldChange"] > lfc_threshold]
+    down = sig[sig["log2FoldChange"] < -lfc_threshold]
+
+    top_up = (
+        up.nlargest(10, "log2FoldChange")[["gene", "log2FoldChange", "padj"]]
+        .apply(lambda r: (r["gene"], r["log2FoldChange"], r["padj"]), axis=1)
+        .tolist()
+    )
+    top_down = (
+        down.nsmallest(10, "log2FoldChange")[["gene", "log2FoldChange", "padj"]]
+        .apply(lambda r: (r["gene"], r["log2FoldChange"], r["padj"]), axis=1)
+        .tolist()
+    )
+    top_significant = (
+        sig.nsmallest(10, "padj")[["gene", "log2FoldChange", "padj"]]
+        .apply(lambda r: (r["gene"], r["log2FoldChange"], r["padj"]), axis=1)
+        .tolist()
+    )
+
+    return {
+        "total_genes": len(df),
+        "significant_genes": len(sig),
+        "upregulated": len(up),
+        "downregulated": len(down),
+        "top_up_genes": top_up,
+        "top_down_genes": top_down,
+        "top_significant": top_significant,
+    }
