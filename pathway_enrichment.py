@@ -11,6 +11,7 @@ Author: RNA-seq Analysis Platform
 """
 
 import gseapy as gp
+import numpy as np
 import pandas as pd
 from typing import List, Tuple, Optional
 from de_analysis import ensure_gene_column
@@ -27,6 +28,16 @@ class PathwayEnrichment:
     - KEGG pathway enrichment
     - Graceful offline handling
     """
+
+    AVAILABLE_DATABASES = {
+        'GO Biological Process': 'GO_Biological_Process_2023',
+        'GO Molecular Function': 'GO_Molecular_Function_2023',
+        'GO Cellular Component': 'GO_Cellular_Component_2023',
+        'KEGG': 'KEGG_2021_Human',
+        'Reactome': 'Reactome_2022',
+        'WikiPathway': 'WikiPathway_2023_Human',
+        'MSigDB Hallmark': 'MSigDB_Hallmark_2020',
+    }
 
     def select_genes_for_enrichment(
         self,
@@ -153,6 +164,87 @@ class PathwayEnrichment:
         return self.run_enrichment(
             gene_list=genes, gene_sets=["KEGG_2021_Human"], organism="Human"
         )
+
+    def get_go_mf_enrichment(self, genes: List[str]) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Query GO Molecular Function 2023 database."""
+        return self.run_enrichment(
+            gene_list=genes, gene_sets=["GO_Molecular_Function_2023"], organism="Human"
+        )
+
+    def get_go_cc_enrichment(self, genes: List[str]) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Query GO Cellular Component 2023 database."""
+        return self.run_enrichment(
+            gene_list=genes, gene_sets=["GO_Cellular_Component_2023"], organism="Human"
+        )
+
+    def get_reactome_enrichment(self, genes: List[str]) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Query Reactome 2022 database."""
+        return self.run_enrichment(
+            gene_list=genes, gene_sets=["Reactome_2022"], organism="Human"
+        )
+
+    def get_wikipathway_enrichment(self, genes: List[str]) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Query WikiPathway 2023 Human database."""
+        return self.run_enrichment(
+            gene_list=genes, gene_sets=["WikiPathway_2023_Human"], organism="Human"
+        )
+
+    def get_hallmark_enrichment(self, genes: List[str]) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Query MSigDB Hallmark 2020 database."""
+        return self.run_enrichment(
+            gene_list=genes, gene_sets=["MSigDB_Hallmark_2020"], organism="Human"
+        )
+
+    @staticmethod
+    def create_ranking_metric(de_results: pd.DataFrame) -> pd.Series:
+        """Create gene ranking from DE results for GSEA. Ranking = -log10(pvalue) * sign(log2FoldChange)."""
+        de_results = ensure_gene_column(de_results)
+        df = de_results.dropna(subset=['pvalue', 'log2FoldChange']).copy()
+        pval = df['pvalue'].clip(lower=1e-300)
+        ranking = -np.log10(pval) * np.sign(df['log2FoldChange'])
+        ranking.index = df['gene']
+        return ranking.sort_values(ascending=False)
+
+    def run_gsea(
+        self,
+        gene_ranks: pd.Series,
+        database: str = 'MSigDB_Hallmark_2020',
+        min_size: int = 15,
+        max_size: int = 500,
+        permutations: int = 1000
+    ) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Run Gene Set Enrichment Analysis using pre-ranked gene list."""
+        if gene_ranks is None or len(gene_ranks) == 0:
+            return pd.DataFrame(), "No ranked genes provided for GSEA"
+
+        try:
+            pre_res = gp.prerank(
+                rnk=gene_ranks,
+                gene_sets=database,
+                min_size=min_size,
+                max_size=max_size,
+                permutation_num=permutations,
+                seed=42,
+                verbose=False,
+                outdir=None,
+            )
+
+            results = pre_res.res2d.copy()
+            # Standardize column names
+            results = results.rename(columns={
+                'Term': 'Term',
+                'NES': 'NES',
+                'NOM p-val': 'P-value',
+                'FDR q-val': 'FDR q-value',
+                'Lead_genes': 'Lead_genes',
+            })
+
+            results = results.sort_values('FDR q-value')
+            return results.head(50), None
+
+        except Exception as e:
+            error_msg = f"GSEA analysis failed: {str(e)}"
+            return pd.DataFrame(), error_msg
 
     def format_results(self, enr_results) -> pd.DataFrame:
         """

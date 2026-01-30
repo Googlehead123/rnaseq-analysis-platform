@@ -5,7 +5,7 @@ Exports multi-sheet Excel workbooks with DE results, enrichment analysis,
 and analysis metadata. Sheet layout adapts to data type (RAW_COUNTS, NORMALIZED, PRE_ANALYZED).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Tuple, Optional, List, Any
 from datetime import datetime
 import re
@@ -30,6 +30,13 @@ class EnrichmentResult:
     genes_used: List[str]  # Genes submitted to Enrichr
     selection_note: str  # E.g., "172 genes (padj<0.05, |log2FC|>1)"
     error: Optional[str] = None  # None if successful, error message if failed
+    # Additional enrichment databases
+    go_mf_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    go_cc_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    reactome_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    wikipathway_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    hallmark_results: pd.DataFrame = field(default_factory=pd.DataFrame)
+    gsea_results: Dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
 @dataclass
