@@ -40,6 +40,7 @@ from visualizations import create_enrichment_dotplot, create_deconvolution_plot
 from visualizations import create_gene_expression_plot, create_venn_diagram, create_normalization_comparison_plot
 from sklearn.decomposition import PCA
 import numpy as np
+from multi_file_merger import merge_parse_results, validate_merge_compatibility
 
 PLATFORM_CSS = """
 /* === RNA-seq Analysis Platform Professional Theme === */
@@ -251,17 +252,177 @@ if "pca_coordinates" not in st.session_state:
 HELP_TEXTS = {
     "padj_threshold": "Adjusted p-value cutoff. Genes with padj below this are considered significant. Default 0.05 controls false discovery rate at 5%.",
     "lfc_threshold": "Log2 fold change cutoff. Genes must exceed this magnitude to be called up/down regulated. 1.0 = 2-fold change.",
-    "volcano": "Volcano plots show statistical significance (-log10 p-value) vs biological significance (fold change). Points in upper corners are most interesting.",
-    "ma_plot": "MA plots show fold change vs average expression. Helps identify expression-dependent bias.",
-    "pca": "Principal Component Analysis projects high-dimensional expression data into 2D. Samples that cluster together have similar expression profiles.",
-    "heatmap": "Clustered heatmap of top DE genes. Z-score normalized per gene. Rows clustered by similarity.",
-    "enrichment": "Pathway enrichment tests if DE genes are overrepresented in known biological pathways (GO, KEGG, Reactome).",
-    "gsea": "Gene Set Enrichment Analysis uses ALL genes ranked by expression change, not just significant ones. More sensitive than ORA.",
-    "deconvolution": "Estimates cell type proportions from bulk RNA-seq using reference signatures. NNLS method.",
+    "summary": """**Purpose**: Provides a quick "health check" of your analysis results and a high-level overview of the biological response.
+
+**How to Read This**: Review the total number of significant genes and the balance between up- and down-regulated genes. The top genes tables show the most extreme changes.
+
+**What to Look For**:
+- A reasonable number of DE genes (too few might mean low power; too many might mean a very strong effect or batch issues).
+- Top genes should make biological sense for your experimental model.
+- Balance between upregulated and downregulated genes.
+
+**Common Pitfalls**:
+- ⚠️ Don't focus only on the top 10 genes; they may be highly variable or have low expression despite high fold changes.
+""",
+    "de_results": """**Purpose**: The master table containing every gene's statistical performance and expression metrics.
+
+**How to Read This**:
+- **gene**: The identifier (Symbol or Ensembl ID).
+- **log2FoldChange**: Magnitude of change (positive = up, negative = down).
+- **padj**: Adjusted p-value (significance).
+- **baseMean**: Average expression level across all samples.
+
+**What to Look For**:
+- Sort by `padj` to find the most statistically robust changes.
+- Sort by `log2FoldChange` to find the genes with the largest biological shifts.
+- Use the search box to find specific genes of interest.
+
+**Common Pitfalls**:
+- ⚠️ High fold changes in genes with very low `baseMean` are often unreliable and may be technical noise.
+""",
+    "volcano": """**Purpose**: Shows which genes are both statistically significant AND biologically meaningful.
+
+**How to Read This**: Each dot is one gene. The x-axis shows the log2 fold change (magnitude of change), and the y-axis shows the statistical significance (-log10 adjusted p-value).
+
+| |Log2FC| | Fold Change |
+| :--- | :--- | :--- |
+| |LFC| = 1 | 2-fold |
+| |LFC| = 2 | 4-fold |
+| |LFC| = 3 | 8-fold |
+
+**What to Look For**:
+- Genes in the **upper-right corner** are significantly upregulated.
+- Genes in the **upper-left corner** are significantly downregulated.
+- The "upper corners" pattern indicates a strong biological response.
+
+**Common Pitfalls**:
+- ⚠️ A very low p-value does NOT mean a gene is biologically important; it just means the change is consistent.
+- Significance ≠ Importance.
+""",
+    "ma_plot": """**Purpose**: Visualizes the relationship between average expression level and fold change to detect systematic biases.
+
+**How to Read This**: The x-axis represents the average expression (A), and the y-axis represents the log2 fold change (M).
+
+**What to Look For**:
+- Points should be centered around y=0 across the entire expression range.
+- A "banana" shape or vertical shift indicates normalization bias or technical artifacts.
+- Higher variance is typically expected at lower expression levels (left side).
+
+**Common Pitfalls**:
+- ⚠️ Be cautious of large fold changes in genes with very low expression, as these are often noisy and expression-dependent.
+""",
+    "pca": """**Purpose**: Reduces the complexity of thousands of genes into a 2D map to see how samples relate to each other.
+
+**How to Read This**: Samples that are closer together have more similar overall gene expression profiles. The axes (PC1, PC2) represent the directions of greatest variation.
+
+**What to Look For**:
+- **Replicate tightness**: Biological replicates should cluster closely together.
+- **Condition separation**: Different experimental groups should form distinct clusters.
+- **Variance explained**: The % on each axis shows how much data variation is captured.
+
+**Common Pitfalls**:
+- ⚠️ If PC1 is dominated by a batch effect (e.g., processing date) rather than your treatment, the biological signal may be masked.
+""",
+    "heatmap": """**Purpose**: Provides a high-level view of expression patterns across samples for the most significant genes.
+
+**How to Read This**: Colors represent **Z-scores** (standard deviations from the gene's mean). Red indicates higher expression, and blue indicates lower. Dendrograms show hierarchical clustering.
+
+**What to Look For**:
+- **Gene blocks**: Groups of genes that are consistently up or down in specific conditions.
+- **Sample clustering**: Samples should ideally cluster by their experimental condition.
+- **Outliers**: Individual samples that don't match their group's pattern.
+
+**Common Pitfalls**:
+- ⚠️ If samples cluster by batch or processing date instead of biology, your results may be confounded by technical variables.
+""",
+    "enrichment": """**Purpose**: Identifies biological "themes" or pathways that are overrepresented in your list of differentially expressed genes.
+
+**How to Read This**: This uses **Over-Representation Analysis (ORA)**. In the dot plot, size represents the number of genes in that pathway, and color represents statistical significance.
+
+**What to Look For**:
+- Pathways relevant to your biological system (e.g., "Skin Development" or "Inflammatory Response").
+- High "Gene Ratio" combined with low p-values.
+- Consistency across different databases (GO, KEGG, Reactome).
+
+**Common Pitfalls**:
+- ⚠️ If your DE gene list is very large (thousands of genes), enrichment results can become non-specific and lose biological resolution.
+""",
+    "gsea": """**Purpose**: Detects subtle but consistent changes in entire pathways without relying on arbitrary significance cutoffs.
+
+**How to Read This**: Unlike ORA, **GSEA** uses a ranked list of ALL genes. The **Normalized Enrichment Score (NES)** indicates if a pathway is generally up (positive) or down (negative).
+
+**What to Look For**:
+- **NES magnitude**: High absolute NES values (>1.5 or 2.0) indicate strong pathway-level shifts.
+- **Leading Edge**: The subset of genes that actually drive the enrichment score.
+- **FDR**: Focus on pathways with a False Discovery Rate < 0.25.
+
+**Common Pitfalls**:
+- ⚠️ GSEA results depend heavily on the quality and completeness of the gene set annotations in databases like MSigDB.
+""",
+    "interpretation": """**Purpose**: Automated insights to help bridge the gap between statistical results and biological meaning.
+
+**How to Read This**: These insights are generated by analyzing your DE and enrichment results to highlight key findings and potential issues.
+
+**What to Look For**:
+- **Critical alerts**: Red flags about data quality or unexpected results.
+- **Pathway clusters**: Groups of related pathways that show a coordinated response.
+- **Recommendations**: Suggested follow-up experiments or validation targets.
+
+**Common Pitfalls**:
+- ⚠️ These are automated suggestions and should always be verified by your own biological expertise and literature review.
+""",
+    "deconvolution": """**Purpose**: Estimates the proportions of different cell types within your "bulk" tissue sample.
+
+**How to Read This**: Uses the **NNLS (Non-Negative Least Squares)** method to compare your data against "fingerprints" of known cell types. Results show estimated percentages.
+
+**What to Look For**:
+- **Population shifts**: Changes in cell types (e.g., increased immune cells in inflamed skin).
+- **Biological consistency**: Does the cell type mix match the tissue you sampled?
+- **Proportions**: Ensure the estimated proportions align with your experimental expectations.
+
+**Common Pitfalls**:
+- ⚠️ These are computational estimates, not ground truth. They are highly dependent on the accuracy of the reference signature used.
+""",
+    "qc_advanced": """**Purpose**: Deep-dive quality control to ensure your data is reliable for publication and downstream analysis.
+
+**How to Read This**: Focuses on identifying outlier samples and detecting potential technical artifacts like batch effects.
+
+**What to Look For**:
+- **Outliers**: Samples that fall far outside the expected clusters in PCA space (e.g., >3 standard deviations).
+- **Batch effects**: Patterns that correlate with technical variables (e.g., plate ID) rather than biology.
+- **Sample distances**: Quantitative metrics of how similar replicates are to each other.
+
+**Common Pitfalls**:
+- ⚠️ Removing outliers should be done with caution and only when there is a clear technical justification.
+""",
+    "gene_panels": """**Purpose**: Focused analysis on curated sets of genes known to be important in specific biological contexts (e.g., Dermatology).
+
+**How to Read This**: These panels allow you to bypass the "noise" of the whole transcriptome and look directly at your genes of interest.
+
+**What to Look For**:
+- **Coordinated changes**: Do genes in a functional panel (e.g., "Skin Barrier") move together?
+- **Marker validation**: Check for expected changes in known markers for your treatment.
+- **Panel-specific patterns**: Unique signatures that define your experimental condition.
+
+**Common Pitfalls**:
+- ⚠️ A panel only shows a subset of genes; don't ignore significant changes that might fall outside these curated lists.
+""",
     "gene_expression": "View normalized expression of individual genes across conditions. Useful for validating DE results.",
     "venn": "Overlap between DE gene sets from different comparisons. Shared genes respond to multiple conditions.",
     "upload": "Upload a gene count matrix (CSV/TSV/Excel). Rows = genes, columns = samples. Raw counts preferred for DE analysis.",
     "metadata": "Assign each sample to an experimental condition (e.g., Control, Treatment). Need ≥2 samples per condition.",
+    "export": """**Purpose**: Save your results for further analysis, presentations, or publication.
+
+**How to Read This**: Choose the format that best fits your next steps.
+
+**What to Look For**:
+- **Excel**: Best for sharing raw data and tables with collaborators.
+- **PDF/Images**: Best for high-quality, publication-ready figures (PNG/SVG).
+- **Session File**: Save your entire analysis state to resume later.
+
+**Common Pitfalls**:
+- ⚠️ Ensure you export the results for the correct comparison if you have multiple treatment groups.
+""",
 }
 
 # --- Helper Functions ---
@@ -443,7 +604,12 @@ if current_step == 1:
     
     col1, col2 = st.columns([3, 1])
     with col1:
-        uploaded_file = st.file_uploader("Upload Counts File (CSV/TSV/Excel)", type=["csv", "tsv", "txt", "xlsx"])
+        uploaded_files = st.file_uploader(
+            "Upload Count Files (CSV/TSV/Excel) — upload multiple files to merge",
+            type=["csv", "tsv", "txt", "xlsx"],
+            accept_multiple_files=True,
+            help=HELP_TEXTS["upload"]
+        )
     with col2:
         st.markdown("**Or try the demo:**")
         if st.button("🧪 Load Demo Data", use_container_width=True):
@@ -475,66 +641,149 @@ if current_step == 1:
             st.rerun()
 
     # Handle file upload
-    if uploaded_file:
-        tmp_path = None
-        try:
-            suffix = f".{uploaded_file.name.split('.')[-1]}"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(uploaded_file.getvalue())
-                tmp_path = tmp.name
+    if uploaded_files:
+        # Handle single or multiple files
+        if len(uploaded_files) == 1:
+            # Single file — existing behavior
+            uploaded_file = uploaded_files[0]
+            tmp_path = None
+            try:
+                suffix = f".{uploaded_file.name.split('.')[-1]}"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(uploaded_file.getvalue())
+                    tmp_path = tmp.name
+                parser = RNASeqParser()
+                result = parser.parse(tmp_path)
 
-            # Parse file
-            parser = RNASeqParser()
-            result = parser.parse(tmp_path)
-
-            # Update session state if new file
-            is_new_file = False
-            if st.session_state["parsed_result"] is None:
-                is_new_file = True
-            elif hasattr(st.session_state["parsed_result"], "expression_df"):
-                old_df = st.session_state["parsed_result"].expression_df
-                new_df = result.expression_df
-                if old_df is None and new_df is None:
-                    is_new_file = False
-                    old_de = getattr(st.session_state["parsed_result"], "de_results_df", None)
-                    new_de = result.de_results_df
-                    if old_de is not None and new_de is not None:
-                        is_new_file = not new_de.equals(old_de)
-                elif old_df is None or new_df is None:
+                is_new_file = False
+                if st.session_state["parsed_result"] is None:
                     is_new_file = True
-                else:
-                    is_new_file = not new_df.equals(old_df)
+                elif hasattr(st.session_state["parsed_result"], "expression_df"):
+                    old_df = st.session_state["parsed_result"].expression_df
+                    new_df = result.expression_df
+                    if old_df is None and new_df is None:
+                        is_new_file = False
+                        old_de = getattr(st.session_state["parsed_result"], "de_results_df", None)
+                        new_de = result.de_results_df
+                        if old_de is not None and new_de is not None:
+                            is_new_file = not new_de.equals(old_de)
+                    elif old_df is None or new_df is None:
+                        is_new_file = True
+                    else:
+                        is_new_file = not new_df.equals(old_df)
 
-            if is_new_file:
-                st.session_state["parsed_result"] = result
-                st.session_state["expression_matrix"] = result.expression_df
+                if is_new_file:
+                    st.session_state["parsed_result"] = result
+                    st.session_state["expression_matrix"] = result.expression_df
+                    st.session_state["analysis_complete"] = False
+                    st.session_state["sample_metadata"] = {}
+                    st.session_state["comparisons"] = []
+                    st.session_state["de_results"] = {}
+                    st.session_state["enrichment_results"] = {}
+                    st.session_state["gsea_results"] = {}
+                    st.session_state["interpretations"] = {}
+                    st.session_state["deconvolution_results"] = None
+                    st.success(f"✅ Loaded {result.data_type.value} data successfully!")
+
+                    if hasattr(result, "data_types_detected") and len(result.data_types_detected) > 1 and result.expression_df is not None:
+                        sample_names = result.expression_df.index.tolist()
+                        detected_metadata = {}
+                        detected_conditions = set()
+                        import re
+                        for sample in sample_names:
+                            match = re.match(r"^.+?_(.+?)_", sample)
+                            if match:
+                                condition = match.group(1)
+                                detected_metadata[sample] = {"condition": condition}
+                                detected_conditions.add(condition)
+                        if detected_metadata:
+                            st.session_state["sample_metadata"] = detected_metadata
+                            st.session_state["conditions"] = sorted(list(detected_conditions))
+                            st.success(f"✓ Auto-detected conditions: {', '.join(sorted(detected_conditions))}")
+
+            except Exception as e:
+                st.error(f"Error parsing file: {str(e)}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+        else:
+            # Multiple files — parse each and merge
+            st.info(f"📂 Merging {len(uploaded_files)} files...")
+            parse_results = []
+            filenames = []
+            tmp_paths = []
+            progress = st.progress(0, text="Parsing files...")
+
+            try:
+                for i, uf in enumerate(uploaded_files):
+                    progress.progress((i + 1) / len(uploaded_files), text=f"Parsing {uf.name}...")
+                    suffix = f".{uf.name.split('.')[-1]}"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        tmp.write(uf.getvalue())
+                        tmp_paths.append(tmp.name)
+                    parser = RNASeqParser()
+                    r = parser.parse(tmp_paths[-1])
+                    parse_results.append(r)
+                    filenames.append(uf.name)
+
+                progress.progress(1.0, text="Merging...")
+
+                # Validate compatibility
+                validation = validate_merge_compatibility(parse_results)
+                report = validation["report"]
+
+                # Show merge report
+                with st.expander("📊 Merge Report", expanded=True):
+                    rc1, rc2, rc3 = st.columns(3)
+                    rc1.metric("Files", report["n_files"])
+                    rc2.metric("Total Samples", sum(report["samples_per_file"]))
+                    rc3.metric("Gene Overlap", f"{report.get('gene_overlap_pct', 0):.1f}%")
+
+                    if validation["issues"]:
+                        for issue in validation["issues"]:
+                            st.warning(f"⚠️ {issue}")
+
+                    # Per-file breakdown
+                    file_info = []
+                    for fname, scount, gcount in zip(filenames, report["samples_per_file"], report["genes_per_file"]):
+                        file_info.append({"File": fname, "Samples": scount, "Genes": gcount})
+                    st.dataframe(pd.DataFrame(file_info), hide_index=True)
+
+                # Merge
+                merged_result = merge_parse_results(parse_results, filenames)
+
+                # Store
+                st.session_state["parsed_result"] = merged_result
+                st.session_state["expression_matrix"] = merged_result.expression_df
                 st.session_state["analysis_complete"] = False
                 st.session_state["sample_metadata"] = {}
                 st.session_state["comparisons"] = []
-                st.success(f"Loaded {result.data_type.value} data successfully!")
-                
-                # Auto-detect metadata logic (copied from original)
-                if hasattr(result, "data_types_detected") and len(result.data_types_detected) > 1 and result.expression_df is not None:
-                    sample_names = result.expression_df.index.tolist()
-                    detected_metadata = {}
-                    detected_conditions = set()
-                    import re
-                    for sample in sample_names:
-                        match = re.match(r"^.+?_(.+?)_", sample)
-                        if match:
-                            condition = match.group(1)
-                            detected_metadata[sample] = {"condition": condition}
-                            detected_conditions.add(condition)
-                    if detected_metadata:
-                        st.session_state["sample_metadata"] = detected_metadata
-                        st.session_state["conditions"] = sorted(list(detected_conditions))
-                        st.success(f"✓ Auto-detected conditions: {', '.join(sorted(detected_conditions))}")
+                st.session_state["de_results"] = {}
+                st.session_state["enrichment_results"] = {}
+                st.session_state["gsea_results"] = {}
+                st.session_state["interpretations"] = {}
+                st.session_state["deconvolution_results"] = None
 
-        except Exception as e:
-            st.error(f"Error parsing file: {str(e)}")
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+                if merged_result.expression_df is not None:
+                    st.success(
+                        f"✅ Merged {len(uploaded_files)} files: "
+                        f"{merged_result.expression_df.shape[0]} samples × "
+                        f"{merged_result.expression_df.shape[1]} genes"
+                    )
+
+                for w in merged_result.warnings:
+                    if "dropped" in w.lower() or "overlap" in w.lower():
+                        st.warning(f"ℹ️ {w}")
+
+            except ValueError as e:
+                st.error(f"❌ Merge failed: {str(e)}")
+            except Exception as e:
+                st.error(f"Error processing files: {str(e)}")
+            finally:
+                for tp in tmp_paths:
+                    if os.path.exists(tp):
+                        os.unlink(tp)
 
     # If data loaded, show preview
     if st.session_state["parsed_result"]:
@@ -787,9 +1036,70 @@ elif current_step == 3:
                                 enr = enrichment_results[comp]
                                 if not enr.go_results.empty:
                                     comp_interps.extend(interp_engine.interpret_enrichment(enr.go_results))
+                            
+                            # Top genes analysis
+                            try:
+                                comp_interps.extend(interp_engine.interpret_top_genes(de_res.results_df, comp_name))
+                            except Exception:
+                                pass
+                            
+                            # Volcano pattern analysis
+                            try:
+                                comp_interps.extend(interp_engine.interpret_volcano_pattern(de_res.results_df, comp_name))
+                            except Exception:
+                                pass
+                            
+                            # Misinterpretation warnings
+                            try:
+                                enr_df = enrichment_results[comp].go_results if comp in enrichment_results else None
+                                comp_interps.extend(interp_engine.generate_misinterpretation_warnings(de_res.results_df, enr_df))
+                            except Exception:
+                                pass
+                            
                             all_interpretations[comp] = comp_interps
                 except Exception:
                     pass
+                
+                # Global interpretations (not per-comparison)
+                global_interps = []
+                
+                # PCA interpretation
+                try:
+                    if st.session_state.get("pca_coordinates") is not None:
+                        pca_interps = interp_engine.interpret_pca(
+                            st.session_state["pca_coordinates"],
+                            st.session_state.get("sample_metadata", {})
+                        )
+                        global_interps.extend(pca_interps)
+                except Exception:
+                    pass
+                
+                # GSEA interpretation
+                try:
+                    for comp, gsea_res in st.session_state.get("gsea_results", {}).items():
+                        if gsea_res is not None and not gsea_res.empty:
+                            gsea_interps = interp_engine.interpret_gsea_results(gsea_res)
+                            comp_key = comp if comp in all_interpretations else list(all_interpretations.keys())[0] if all_interpretations else None
+                            if comp_key:
+                                all_interpretations[comp_key].extend(gsea_interps)
+                except Exception:
+                    pass
+                
+                # Deconvolution interpretation  
+                try:
+                    if st.session_state.get("deconvolution_results") is not None:
+                        deconv_interps = interp_engine.interpret_deconvolution(
+                            st.session_state["deconvolution_results"],
+                            st.session_state.get("sample_metadata")
+                        )
+                        global_interps.extend(deconv_interps)
+                except Exception:
+                    pass
+                
+                # Add global interpretations to all comparisons
+                for comp in all_interpretations:
+                    all_interpretations[comp].extend(global_interps)
+                
                 st.session_state["interpretations"] = all_interpretations
                 
                 # 3. Visualizations
@@ -909,6 +1219,8 @@ elif current_step == 4:
             ])
             
             with tab_summary:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["summary"])
                 if res.results_df is not None:
                     summary = compute_de_summary(res.results_df)
                     col1, col2, col3, col4 = st.columns(4)
@@ -926,6 +1238,8 @@ elif current_step == 4:
                         st.dataframe(pd.DataFrame(summary["top_down_genes"], columns=["Gene", "Log2FC", "Padj"]))
             
             with tab_de:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["de_results"])
                 search_query = st.text_input("🔍 Search genes...", placeholder="Type gene name (e.g., COL1A1)")
                 display_df = res.results_df
                 if search_query:
@@ -942,26 +1256,36 @@ elif current_step == 4:
                 )
             
             with tab_volcano:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["volcano"])
                 comp_name = f"{active_comp[0]}_vs_{active_comp[1]}"
                 if f"volcano_{comp_name}" in st.session_state["figures"]:
                     plot_with_download(st.session_state["figures"][f"volcano_{comp_name}"], f"volcano_{comp_name}")
             
             with tab_ma:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["ma_plot"])
                 comp_name = f"{active_comp[0]}_vs_{active_comp[1]}"
                 if f"ma_{comp_name}" in st.session_state["figures"]:
                     plot_with_download(st.session_state["figures"][f"ma_{comp_name}"], f"ma_{comp_name}")
             
             with tab_heatmap:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["heatmap"])
                 if "heatmap" in st.session_state["figures"]:
                     plot_with_download(st.session_state["figures"]["heatmap"], "heatmap")
                 if "correlation" in st.session_state["figures"]:
                     plot_with_download(st.session_state["figures"]["correlation"], "correlation")
             
             with tab_pca:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["pca"])
                 if "pca" in st.session_state["figures"]:
                     plot_with_download(st.session_state["figures"]["pca"], "pca")
             
             with tab_enrichment:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["enrichment"])
                 if active_comp in st.session_state["enrichment_results"]:
                     enr = st.session_state["enrichment_results"][active_comp]
                     if enr.error:
@@ -1002,6 +1326,8 @@ elif current_step == 4:
                                 st.dataframe(db_df)
             
             with tab_gsea:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["gsea"])
                 st.subheader("Gene Set Enrichment Analysis (GSEA)")
                 if active_comp in st.session_state.get("gsea_results", {}):
                     gsea_df = st.session_state["gsea_results"][active_comp]
@@ -1039,28 +1365,42 @@ elif current_step == 4:
                     st.info("GSEA results not available. GSEA requires network access to MSigDB gene sets.")
             
             with tab_interpret:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["interpretation"])
                 st.subheader("Automated Interpretations")
                 comp_interps = st.session_state.get("interpretations", {}).get(active_comp, [])
-                
                 if comp_interps:
-                    level_icons = {'critical': '🔴', 'important': '🟡', 'informative': '🔵'}
-                    
+                    # Group by category
+                    categories = {}
                     for interp in comp_interps:
-                        icon = level_icons.get(interp.level, '📌')
-                        with st.expander(f"{icon} {interp.title}", expanded=(interp.level == 'critical')):
-                            st.markdown(interp.description)
-                            
-                            if interp.recommendations:
-                                st.markdown("**Recommendations:**")
-                                for rec in interp.recommendations:
-                                    st.markdown(f"- {rec}")
-                            
-                            if interp.evidence:
-                                with st.expander("Evidence Details"):
-                                    st.json(interp.evidence)
+                        cat = getattr(interp, 'category', 'general')
+                        categories.setdefault(cat, []).append(interp)
+                    
+                    category_labels = {
+                        "de": "🧬 Differential Expression Insights",
+                        "enrichment": "🔬 Pathway & Enrichment Insights",
+                        "qc": "📊 Quality Control Insights",
+                        "deconvolution": "🧫 Cell Composition Insights",
+                        "warning": "⚠️ Interpretation Cautions",
+                    }
+                    
+                    for cat, interps in categories.items():
+                        st.markdown(f"### {category_labels.get(cat, f'📝 {cat.title()} Insights')}")
+                        for interp in interps:
+                            icon = {"critical": "🔴", "important": "🟡", "informative": "🔵"}.get(interp.level, "⚪")
+                            with st.expander(f"{icon} {interp.title}", expanded=(interp.level == "critical")):
+                                st.markdown(interp.description)
+                                if interp.recommendations:
+                                    st.markdown("**Recommendations:**")
+                                    for rec in interp.recommendations:
+                                        st.markdown(f"- {rec}")
+                                if interp.evidence:
+                                    with st.expander("📋 Evidence Details"):
+                                        st.json(interp.evidence)
                 else:
-                    st.info("No interpretations generated for this comparison.")
+                    st.info("Run analysis to generate interpretations.")
                 
+                # Methods text generator (keep existing)
                 st.markdown("---")
                 st.subheader("📝 Methods Text Generator")
                 if st.button("Generate Methods Section"):
@@ -1086,6 +1426,8 @@ elif current_step == 4:
                         st.error(f"Failed to generate methods text: {str(e)}")
             
             with tab_deconv:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["deconvolution"])
                 st.subheader("Cell Type Deconvolution")
                 deconv_res = st.session_state.get("deconvolution_results")
                 
@@ -1118,6 +1460,8 @@ elif current_step == 4:
                     )
             
             with tab_adv_qc:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["qc_advanced"])
                 st.subheader("Advanced Quality Control")
                 
                 # Outlier Detection
@@ -1153,6 +1497,8 @@ elif current_step == 4:
                     plot_with_download(fig_batch, "qc_batch")
             
             with tab_panels:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["gene_panels"])
                 panel_keys = [k for k in st.session_state["figures"].keys() if k.startswith("panel_")]
                 if panel_keys:
                     for key in panel_keys:
@@ -1161,8 +1507,9 @@ elif current_step == 4:
                     st.info("No gene panels available.")
             
             with tab_gene_expr:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["gene_expression"])
                 st.subheader("Gene Expression Viewer")
-                st.caption(HELP_TEXTS["gene_expression"])
                 if res.results_df is not None:
                     all_genes = sorted(res.results_df["gene"].dropna().unique().tolist())
                     selected_gene = st.selectbox("Select Gene", all_genes, help="Type to search", key="gene_expr_select")
@@ -1178,8 +1525,9 @@ elif current_step == 4:
                     st.info("Run analysis to view gene expression.")
 
             with tab_venn:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["venn"])
                 st.subheader("DE Gene Overlap")
-                st.caption(HELP_TEXTS["venn"])
                 if len(st.session_state["de_results"]) >= 2:
                     gene_sets = {}
                     for comp, de_res in st.session_state["de_results"].items():
@@ -1202,6 +1550,8 @@ elif current_step == 4:
                     st.info("Run multiple comparisons to see DE gene overlap.")
 
             with tab_export:
+                with st.expander("ℹ️ How to read this tab", expanded=False):
+                    st.markdown(HELP_TEXTS["export"])
                 st.header("Export Results")
                 col1, col2 = st.columns(2)
                 
